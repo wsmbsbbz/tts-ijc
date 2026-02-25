@@ -1,0 +1,10 @@
+# Core — always required
+edge-tts>=6.1.9
+
+# Optional free provider
+gTTS>=2.5.0
+
+# Optional paid providers (install whichever you use)
+# azure-cognitiveservices-speech>=1.35.0
+# openai>=1.0.0
+# google-cloud-texttospeech>=2.16.0
