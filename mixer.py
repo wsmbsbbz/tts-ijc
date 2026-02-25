@@ -1,6 +1,7 @@
 """Audio mixing: build a timed TTS track and merge it with the original audio."""
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -46,15 +47,110 @@ def _adjust_speed_ffmpeg(input_path: str, output_path: str, factor: float) -> No
     )
 
 
+def _channel_mean_volume_db(
+    audio_path: str,
+    start_ms: int,
+    duration_s: float,
+    channel_idx: int,
+) -> float:
+    """Return mean volume (dB) of a single channel (0=left, 1=right).
+
+    Extracts the channel with the pan filter so the result is unambiguous.
+    Returns -inf on silence or any error.
+    """
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-ss", f"{start_ms / 1000:.3f}",
+            "-t", f"{duration_s:.3f}",
+            "-i", audio_path,
+            "-af", f"pan=mono|c0=c{channel_idx},volumedetect",
+            "-f", "null", "-",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    m = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", result.stderr)
+    if not m:
+        return float("-inf")
+    return float(m.group(1))
+
+
+def detect_voice_channel(
+    audio_path: str,
+    start_ms: int,
+    end_ms: int,
+    threshold_db: float = 3.0,
+) -> str:
+    """Detect which stereo channel carries more energy in the given time range.
+
+    Returns "left", "right", or "center" (balanced / undetectable).
+    Falls back to "center" on any error so panning degrades gracefully.
+    """
+    duration_s = (end_ms - start_ms) / 1000
+    if duration_s <= 0:
+        return "center"
+
+    left_db = _channel_mean_volume_db(audio_path, start_ms, duration_s, 0)
+    right_db = _channel_mean_volume_db(audio_path, start_ms, duration_s, 1)
+
+    diff = left_db - right_db  # positive → left is louder
+    if diff > threshold_db:
+        return "left"
+    if diff < -threshold_db:
+        return "right"
+    return "center"
+
+
+def _pan_mono_to_stereo(
+    input_path: str,
+    output_path: str,
+    channel: str,
+    tts_volume: float,
+    bleed: float = 0.3,
+) -> None:
+    """Convert a mono TTS clip to stereo with directional panning.
+
+    *channel* is where the original voice was detected:
+      "left"   → TTS goes right (full), left gets *bleed* fraction
+      "right"  → TTS goes left (full), right gets *bleed* fraction
+      "center" → TTS plays equally on both sides
+
+    *tts_volume* is the overall amplitude scale (0–1) applied here so
+    the final amix step can use weight=1.
+    """
+    vol = tts_volume
+    bl = tts_volume * bleed
+
+    if channel == "left":
+        pan = f"pan=stereo|c0={bl:.4f}*c0|c1={vol:.4f}*c0"
+    elif channel == "right":
+        pan = f"pan=stereo|c0={vol:.4f}*c0|c1={bl:.4f}*c0"
+    else:
+        pan = f"pan=stereo|c0={vol:.4f}*c0|c1={vol:.4f}*c0"
+
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", input_path, "-af", pan, output_path],
+        check=True,
+        capture_output=True,
+    )
+
+
 def generate_tts_clips(
     segments: List[VTTSegment],
     provider,
     tmp_dir: str,
+    original_path: str,
+    tts_volume: float,
     speed_up: bool = True,
 ) -> List[Tuple[int, str]]:
     """Generate TTS audio clips for each segment.
 
-    Returns a list of (start_ms, clip_path) tuples.
+    Each clip is panned to stereo based on which channel the original voice
+    occupies in that time window. Volume is baked into the pan filter so the
+    final amix step can use weight=1.
+
+    Returns a list of (start_ms, stereo_clip_path) tuples.
     Only segments with successfully generated audio are included.
     """
     clips: List[Tuple[int, str]] = []
@@ -114,7 +210,17 @@ def generate_tts_clips(
         else:
             os.rename(raw_path, final_path)
 
-        clips.append((seg.start_ms, final_path))
+        # Detect voice channel and pan TTS to the opposite side
+        panned_path = os.path.join(tmp_dir, f"tts_panned_{seg.index}.mp3")
+        try:
+            ch = detect_voice_channel(original_path, seg.start_ms, seg.end_ms)
+            _pan_mono_to_stereo(final_path, panned_path, ch, tts_volume)
+            print(f"    voice channel: {ch}")
+        except Exception as exc:
+            print(f"    WARNING: panning failed ({exc}), using mono fallback")
+            _pan_mono_to_stereo(final_path, panned_path, "center", tts_volume)
+
+        clips.append((seg.start_ms, panned_path))
 
     return clips
 

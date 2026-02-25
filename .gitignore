@@ -1,0 +1,9 @@
+*.mp3
+*.vtt
+*.wav
+*.ogg
+*.m4a
+__pycache__/
+*.pyc
+*.pyo
+*_tmp_clips/
