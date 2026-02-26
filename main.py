@@ -37,6 +37,7 @@ gcloud    *1M    ★★★★     Yes       google-cloud-texttospeech
 """
 
 import argparse
+import asyncio
 import os
 import subprocess
 import sys
@@ -149,6 +150,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="TTS track volume, range 0–1 (default: 0.3)",
     )
     mix.add_argument(
+        "--concurrency",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Max concurrent TTS requests (default: 5)",
+    )
+    mix.add_argument(
         "--no-speedup",
         action="store_true",
         help="Disable automatic speed-up when TTS is longer than the subtitle window",
@@ -235,16 +243,17 @@ def main() -> None:
     print(f"  Duration: {original_duration_ms / 1000:.1f}s")
 
     with tempfile.TemporaryDirectory(prefix="transc_") as tmp_dir:
-        # Generate TTS clips
-        print(f"\nGenerating TTS clips ({len(segments)} segments)…")
-        clips = generate_tts_clips(
+        # Generate TTS clips (concurrent)
+        print(f"\nGenerating TTS clips ({len(segments)} segments, concurrency={args.concurrency})…")
+        clips = asyncio.run(generate_tts_clips(
             segments=segments,
             provider=provider,
             tmp_dir=tmp_dir,
             original_path=args.audio,
             tts_volume=args.tts_volume,
             speed_up=not args.no_speedup,
-        )
+            concurrency=args.concurrency,
+        ))
 
         if not clips:
             print("ERROR: All TTS generations failed.", file=sys.stderr)

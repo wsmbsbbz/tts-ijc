@@ -1,11 +1,12 @@
 """Audio mixing: build a timed TTS track and merge it with the original audio."""
 
+import asyncio
 import os
 import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from parser import VTTSegment
 
@@ -136,92 +137,132 @@ def _pan_mono_to_stereo(
     )
 
 
-def generate_tts_clips(
+def _truncate_audio(input_path: str, output_path: str, duration_ms: int) -> None:
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", input_path, "-t", str(duration_ms / 1000), output_path],
+        check=True,
+        capture_output=True,
+    )
+
+
+async def _process_segment(
+    seg: VTTSegment,
+    provider,
+    tmp_dir: str,
+    original_path: str,
+    tts_volume: float,
+    speed_up: bool,
+    tts_semaphore: asyncio.Semaphore,
+    total: int,
+) -> Optional[Tuple[int, str]]:
+    """Process one segment: TTS + speed adjust + channel detect + pan.
+
+    TTS (network) and channel detection (local) run in parallel.
+    Returns (start_ms, panned_clip_path) or None on failure.
+    """
+    label = f"[{seg.index + 1}/{total}]"
+    raw_path = os.path.join(tmp_dir, f"tts_raw_{seg.index}.mp3")
+    final_path = os.path.join(tmp_dir, f"tts_{seg.index}.mp3")
+    panned_path = os.path.join(tmp_dir, f"tts_panned_{seg.index}.mp3")
+
+    print(f"  {label} {seg.start_ms / 1000:.1f}s  {seg.text[:50]}")
+
+    # Channel detection runs immediately — independent of TTS
+    ch_task = asyncio.create_task(
+        asyncio.to_thread(detect_voice_channel, original_path, seg.start_ms, seg.end_ms)
+    )
+
+    # TTS with retry (semaphore limits concurrent network requests)
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, 4):
+        try:
+            async with tts_semaphore:
+                await provider.async_generate(seg.text, raw_path)
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            print(f"  {label} attempt {attempt}/3 failed: {exc}")
+            if attempt < 3:
+                await asyncio.sleep(1)
+
+    if last_exc is not None:
+        ch_task.cancel()
+        print(f"  {label} WARNING: skipped after 3 attempts")
+        return None
+
+    if not os.path.exists(raw_path) or os.path.getsize(raw_path) == 0:
+        ch_task.cancel()
+        print(f"  {label} WARNING: TTS produced no output")
+        return None
+
+    # Speed adjustment
+    if speed_up and seg.duration_ms > 0:
+        try:
+            clip_ms = await asyncio.to_thread(_get_audio_duration_ms, raw_path)
+            if clip_ms > seg.duration_ms:
+                factor = clip_ms / seg.duration_ms
+                if factor <= 4.0:
+                    await asyncio.to_thread(_adjust_speed_ffmpeg, raw_path, final_path, factor)
+                else:
+                    await asyncio.to_thread(_truncate_audio, raw_path, final_path, seg.duration_ms)
+            else:
+                os.rename(raw_path, final_path)
+        except Exception as exc:
+            print(f"  {label} WARNING: speed adjustment failed ({exc}), using raw clip")
+            os.rename(raw_path, final_path)
+    else:
+        os.rename(raw_path, final_path)
+
+    # Wait for channel detection (likely already done by now)
+    try:
+        ch = await ch_task
+    except Exception:
+        ch = "center"
+
+    print(f"  {label} voice: {ch}")
+
+    # Pan mono → stereo with volume baked in
+    try:
+        await asyncio.to_thread(_pan_mono_to_stereo, final_path, panned_path, ch, tts_volume)
+    except Exception as exc:
+        print(f"  {label} WARNING: panning failed ({exc}), using center")
+        await asyncio.to_thread(_pan_mono_to_stereo, final_path, panned_path, "center", tts_volume)
+
+    return (seg.start_ms, panned_path)
+
+
+async def generate_tts_clips(
     segments: List[VTTSegment],
     provider,
     tmp_dir: str,
     original_path: str,
     tts_volume: float,
     speed_up: bool = True,
+    concurrency: int = 5,
 ) -> List[Tuple[int, str]]:
-    """Generate TTS audio clips for each segment.
+    """Generate all TTS clips concurrently with a semaphore-limited TTS rate.
 
-    Each clip is panned to stereo based on which channel the original voice
-    occupies in that time window. Volume is baked into the pan filter so the
-    final amix step can use weight=1.
-
-    Returns a list of (start_ms, stereo_clip_path) tuples.
-    Only segments with successfully generated audio are included.
+    TTS requests and channel detection run in parallel per segment.
+    Returns a list of (start_ms, stereo_clip_path) sorted by start time.
     """
-    clips: List[Tuple[int, str]] = []
+    tts_semaphore = asyncio.Semaphore(concurrency)
     total = len(segments)
 
-    for seg in segments:
-        raw_path = os.path.join(tmp_dir, f"tts_raw_{seg.index}.mp3")
-        final_path = os.path.join(tmp_dir, f"tts_{seg.index}.mp3")
+    tasks = [
+        _process_segment(seg, provider, tmp_dir, original_path, tts_volume, speed_up, tts_semaphore, total)
+        for seg in segments
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        print(
-            f"  [{seg.index + 1}/{total}] {seg.start_ms / 1000:.1f}s  {seg.text[:50]}"
-        )
+    clips: List[Tuple[int, str]] = []
+    for seg, result in zip(segments, results):
+        if isinstance(result, Exception):
+            print(f"  [{seg.index + 1}/{total}] ERROR: {result}")
+        elif result is not None:
+            clips.append(result)
 
-        max_attempts = 3
-        last_exc: Exception | None = None
-        for attempt in range(1, max_attempts + 1):
-            try:
-                provider.generate(seg.text, raw_path)
-                last_exc = None
-                break
-            except Exception as exc:
-                last_exc = exc
-                print(f"    attempt {attempt}/{max_attempts} failed: {exc}")
-        if last_exc is not None:
-            print(f"    WARNING: skipping segment {seg.index} after {max_attempts} attempts")
-            continue
-
-        if not os.path.exists(raw_path) or os.path.getsize(raw_path) == 0:
-            print(f"    WARNING: TTS produced no output for segment {seg.index}")
-            continue
-
-        # Optionally speed up if the clip is longer than the subtitle window
-        if speed_up and seg.duration_ms > 0:
-            try:
-                clip_ms = _get_audio_duration_ms(raw_path)
-                if clip_ms > seg.duration_ms:
-                    factor = clip_ms / seg.duration_ms
-                    if factor <= 4.0:
-                        _adjust_speed_ffmpeg(raw_path, final_path, factor)
-                    else:
-                        # Too extreme — truncate instead
-                        subprocess.run(
-                            [
-                                "ffmpeg", "-y",
-                                "-i", raw_path,
-                                "-t", str(seg.duration_ms / 1000),
-                                final_path,
-                            ],
-                            check=True,
-                            capture_output=True,
-                        )
-                else:
-                    os.rename(raw_path, final_path)
-            except Exception as exc:
-                print(f"    WARNING: Speed adjustment failed: {exc}. Using raw clip.")
-                os.rename(raw_path, final_path)
-        else:
-            os.rename(raw_path, final_path)
-
-        # Detect voice channel and pan TTS to the opposite side
-        panned_path = os.path.join(tmp_dir, f"tts_panned_{seg.index}.mp3")
-        try:
-            ch = detect_voice_channel(original_path, seg.start_ms, seg.end_ms)
-            _pan_mono_to_stereo(final_path, panned_path, ch, tts_volume)
-            print(f"    voice channel: {ch}")
-        except Exception as exc:
-            print(f"    WARNING: panning failed ({exc}), using mono fallback")
-            _pan_mono_to_stereo(final_path, panned_path, "center", tts_volume)
-
-        clips.append((seg.start_ms, panned_path))
-
+    clips.sort(key=lambda x: x[0])
     return clips
 
 

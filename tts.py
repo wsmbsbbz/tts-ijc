@@ -26,7 +26,11 @@ class TTSProvider(ABC):
 
     @abstractmethod
     def generate(self, text: str, output_path: str) -> None:
-        """Generate speech for *text* and write it to *output_path*."""
+        """Generate speech for *text* and write it to *output_path* (sync)."""
+
+    async def async_generate(self, text: str, output_path: str) -> None:
+        """Async version — default wraps sync generate in a thread pool."""
+        await asyncio.to_thread(self.generate, text, output_path)
 
     @property
     @abstractmethod
@@ -50,19 +54,18 @@ class EdgeTTSProvider(TTSProvider):
     def name(self) -> str:
         return f"edge ({self._voice})"
 
-    def generate(self, text: str, output_path: str) -> None:
+    async def async_generate(self, text: str, output_path: str) -> None:
         try:
             import edge_tts  # type: ignore
         except ImportError as exc:
             raise TTSError(
                 "edge-tts not installed. Run: pip install edge-tts"
             ) from exc
+        communicate = edge_tts.Communicate(text, self._voice)
+        await communicate.save(output_path)
 
-        async def _run() -> None:
-            communicate = edge_tts.Communicate(text, self._voice)
-            await communicate.save(output_path)
-
-        asyncio.run(_run())
+    def generate(self, text: str, output_path: str) -> None:
+        asyncio.run(self.async_generate(text, output_path))
 
 
 # ---------------------------------------------------------------------------
