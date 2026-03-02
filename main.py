@@ -69,7 +69,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # Positional
     p.add_argument("audio", help="Input audio file path (mp3, m4a, wav, ogg, …)")
     p.add_argument("vtt", help="VTT subtitle file with translated text")
-    p.add_argument("output", help="Output file path (e.g. output.mp3)")
+    p.add_argument(
+        "output",
+        help=(
+            "Output file path. Use .mp3 extension to compress the result (e.g. output.mp3). "
+            "If the input is a WAV file and the output extension is also .wav, "
+            "it will automatically be saved as .mp3 to reduce file size."
+        ),
+    )
 
     # TTS provider selection
     p.add_argument(
@@ -187,6 +194,23 @@ def _check_ffmpeg() -> None:
         sys.exit(1)
 
 
+def _resolve_output_path(audio_input: str, output: str) -> str:
+    """If the input is WAV and the output is also WAV, redirect output to MP3.
+
+    WAV files are uncompressed; converting to MP3 can reduce file size by ~10x.
+    """
+    input_ext = Path(audio_input).suffix.lower()
+    output_path = Path(output)
+    if input_ext == ".wav" and output_path.suffix.lower() == ".wav":
+        mp3_path = str(output_path.with_suffix(".mp3"))
+        print(
+            f"NOTE: Input is WAV — redirecting output from '{output}' to '{mp3_path}' "
+            f"to compress the file (~10x smaller)."
+        )
+        return mp3_path
+    return output
+
+
 def _validate_volume(v: float) -> None:
     if not (0.0 <= v <= 1.0):
         print(
@@ -214,7 +238,7 @@ def main() -> None:
     _validate_volume(args.tts_volume)
     _check_ffmpeg()
 
-    output_path = args.output
+    output_path = _resolve_output_path(args.audio, args.output)
 
     # Parse subtitles
     print(f"Parsing VTT: {args.vtt}")
