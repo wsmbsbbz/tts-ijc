@@ -152,9 +152,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     mix.add_argument(
         "--tts-volume",
         type=float,
-        default=0.3,
+        default=0.08,
         metavar="N",
-        help="TTS track volume, range 0–1 (default: 0.3)",
+        help="TTS track volume, range 0–1 (default: 0.08). Try 0.03–0.1 for quiet originals.",
     )
     mix.add_argument(
         "--concurrency",
@@ -274,7 +274,6 @@ def main() -> None:
             provider=provider,
             tmp_dir=tmp_dir,
             original_path=args.audio,
-            tts_volume=args.tts_volume,
             speed_up=not args.no_speedup,
             concurrency=args.concurrency,
         ))
@@ -297,14 +296,14 @@ def main() -> None:
             print(f"ERROR: Could not build TTS track: {exc}", file=sys.stderr)
             sys.exit(1)
 
-        # Merge with original (volume already baked into the panned clips)
+        # Merge with original — volume filter applied to TTS track only
         print(f"Merging with original audio (TTS volume: {args.tts_volume})…")
         try:
             merge_with_original(
                 original_path=args.audio,
                 tts_track_path=tts_track_path,
                 output_path=output_path,
-                tts_volume=1.0,
+                tts_volume=args.tts_volume,
             )
         except subprocess.CalledProcessError as exc:
             print(f"ERROR: ffmpeg merge failed:\n{exc.stderr}", file=sys.stderr)

@@ -107,7 +107,6 @@ def _pan_mono_to_stereo(
     input_path: str,
     output_path: str,
     channel: str,
-    tts_volume: float,
     bleed: float = 0.3,
 ) -> None:
     """Convert a mono TTS clip to stereo with directional panning.
@@ -117,18 +116,15 @@ def _pan_mono_to_stereo(
       "right"  → TTS goes left (full), right gets *bleed* fraction
       "center" → TTS plays equally on both sides
 
-    *tts_volume* is the overall amplitude scale (0–1) applied here so
-    the final amix step can use weight=1.
+    Volume is NOT applied here — it is controlled in merge_with_original
+    via the ffmpeg volume filter so that all volume logic is in one place.
     """
-    vol = tts_volume
-    bl = tts_volume * bleed
-
     if channel == "left":
-        pan = f"pan=stereo|c0={bl:.4f}*c0|c1={vol:.4f}*c0"
+        pan = f"pan=stereo|c0={bleed:.4f}*c0|c1=1.0000*c0"
     elif channel == "right":
-        pan = f"pan=stereo|c0={vol:.4f}*c0|c1={bl:.4f}*c0"
+        pan = f"pan=stereo|c0=1.0000*c0|c1={bleed:.4f}*c0"
     else:
-        pan = f"pan=stereo|c0={vol:.4f}*c0|c1={vol:.4f}*c0"
+        pan = "pan=stereo|c0=1.0000*c0|c1=1.0000*c0"
 
     subprocess.run(
         ["ffmpeg", "-y", "-i", input_path, "-af", pan, output_path],
@@ -150,7 +146,6 @@ async def _process_segment(
     provider,
     tmp_dir: str,
     original_path: str,
-    tts_volume: float,
     speed_up: bool,
     tts_semaphore: asyncio.Semaphore,
     total: int,
@@ -222,12 +217,12 @@ async def _process_segment(
 
     print(f"  {label} voice: {ch}")
 
-    # Pan mono → stereo with volume baked in
+    # Pan mono → stereo (volume is applied later in merge_with_original)
     try:
-        await asyncio.to_thread(_pan_mono_to_stereo, final_path, panned_path, ch, tts_volume)
+        await asyncio.to_thread(_pan_mono_to_stereo, final_path, panned_path, ch)
     except Exception as exc:
         print(f"  {label} WARNING: panning failed ({exc}), using center")
-        await asyncio.to_thread(_pan_mono_to_stereo, final_path, panned_path, "center", tts_volume)
+        await asyncio.to_thread(_pan_mono_to_stereo, final_path, panned_path, "center")
 
     return (seg.start_ms, panned_path)
 
@@ -237,7 +232,6 @@ async def generate_tts_clips(
     provider,
     tmp_dir: str,
     original_path: str,
-    tts_volume: float,
     speed_up: bool = True,
     concurrency: int = 5,
 ) -> List[Tuple[int, str]]:
@@ -250,7 +244,7 @@ async def generate_tts_clips(
     total = len(segments)
 
     tasks = [
-        _process_segment(seg, provider, tmp_dir, original_path, tts_volume, speed_up, tts_semaphore, total)
+        _process_segment(seg, provider, tmp_dir, original_path, speed_up, tts_semaphore, total)
         for seg in segments
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -350,14 +344,14 @@ def merge_with_original(
     else:
         codec_args = ["-c:a", "pcm_s16le"]  # wav fallback
 
-    # amix weights: original=1.0, tts=tts_volume
+    # Apply volume reduction to TTS track, then mix with original untouched
     subprocess.run(
         [
             "ffmpeg", "-y",
             "-i", original_path,
             "-i", tts_track_path,
             "-filter_complex",
-            f"[0:a][1:a]amix=inputs=2:weights=1 {tts_volume:.3f}:normalize=0[out]",
+            f"[1:a]volume={tts_volume:.3f}[tts];[0:a][tts]amix=inputs=2:normalize=0[out]",
             "-map", "[out]",
         ]
         + codec_args
