@@ -2,19 +2,16 @@ package http
 
 import (
 	"encoding/json"
-	"io/fs"
 	"net/http"
 )
 
-// NewRouter creates the HTTP mux with all routes registered.
-// frontendFS should be the embedded frontend static files (or nil to skip).
-func NewRouter(jobHandler *JobHandler, uploadHandler *UploadHandler, frontendFS fs.FS, opts ...func(http.Handler) http.Handler) http.Handler {
+// NewRouter creates the HTTP mux with all API routes registered.
+func NewRouter(jobHandler *JobHandler, uploadHandler *UploadHandler, opts ...func(http.Handler) http.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	// API routes
 	mux.HandleFunc("/api/upload-url", uploadHandler.HandleRequestURL)
 	mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
-		// Route to create or list based on method
 		switch r.Method {
 		case http.MethodPost:
 			jobHandler.HandleCreate(w, r)
@@ -25,11 +22,6 @@ func NewRouter(jobHandler *JobHandler, uploadHandler *UploadHandler, frontendFS 
 		}
 	})
 	mux.HandleFunc("/api/jobs/", jobHandler.HandleGet)
-
-	// Frontend static files
-	if frontendFS != nil {
-		mux.Handle("/", http.FileServer(http.FS(frontendFS)))
-	}
 
 	// Apply middleware stack: CORS → Logging → Recovery → (optional) → mux
 	var handler http.Handler = mux

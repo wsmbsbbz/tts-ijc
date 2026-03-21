@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -20,7 +19,6 @@ import (
 	"github.com/wsmbsbbz/tts-ijc/server/infrastructure/storage"
 	"github.com/wsmbsbbz/tts-ijc/server/infrastructure/translator"
 	httpintf "github.com/wsmbsbbz/tts-ijc/server/interfaces/http"
-	"github.com/wsmbsbbz/tts-ijc/server/web"
 )
 
 func main() {
@@ -72,19 +70,7 @@ func main() {
 	jobHandler := httpintf.NewJobHandler(jobSvc, r2)
 	uploadHandler := httpintf.NewUploadHandler(uploadSvc)
 
-	// Embedded frontend: web/static/ → served at /
-	// StaticFS is nil in local builds (no "docker" build tag).
-	var frontendFS fs.FS
-	if web.StaticFS != nil {
-		sub, err := fs.Sub(web.StaticFS, "static")
-		if err != nil {
-			log.Printf("WARN: embedded frontend not available: %v", err)
-		} else {
-			frontendFS = sub
-		}
-	}
-
-	router := httpintf.NewRouter(jobHandler, uploadHandler, frontendFS,
+	router := httpintf.NewRouter(jobHandler, uploadHandler,
 		httpintf.BasicAuth(cfg.AuthUser, cfg.AuthPass),
 	)
 

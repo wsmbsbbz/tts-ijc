@@ -1,4 +1,7 @@
-const API = '';
+// API base URL — set via global window.API_BASE or default to same origin.
+// In production (Cloudflare Pages etc.), configure this in index.html:
+//   <script>window.API_BASE = 'https://api.example.com';</script>
+const API = (window.API_BASE || '').replace(/\/+$/, '');
 
 // --- DOM refs ---
 const audioInput = document.getElementById('audio-file');

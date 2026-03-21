@@ -185,7 +185,7 @@ Today we'll discuss an important topic.
 - **Go 服务端**：DDD 分层架构（domain / application / infrastructure / interfaces）
 - **存储**：Cloudflare R2（S3 兼容），通过 Presigned URL 上传/下载
 - **任务队列**：SQLite + 内存队列，支持并发 Worker 处理
-- **前端**：嵌入式 HTML/CSS/JS，由 Go 二进制直接提供服务
+- **前端**：独立的 HTML/CSS/JS，部署到 Cloudflare Pages 等静态托管，通过 `window.API_BASE` 配置 API 地址
 - **底层 TTS**：通过调用 Python 脚本（cli/main.py）完成实际的 TTS 混音
 
 ### Docker 部署
@@ -215,6 +215,22 @@ docker run -p 8080:8080 \
 | `R2_BUCKET_NAME` | — | R2 存储桶名称 |
 | `PYTHON_BIN` | `python3` | Python 可执行文件路径 |
 | `PYTHON_DIR` | `/opt/tc` | Python 脚本所在目录 |
+| `AUTH_USER` | — | HTTP Basic Auth 用户名（留空则不启用） |
+| `AUTH_PASS` | — | HTTP Basic Auth 密码 |
+
+### 前端配置
+
+前端独立部署（如 Cloudflare Pages），通过 `window.API_BASE` 指定 API 服务地址。在 `index.html` 中添加：
+
+```html
+<script>window.API_BASE = 'https://api.example.com';</script>
+```
+
+本地开发时启动前端：
+
+```bash
+cd frontend && python3 -m http.server 3000
+```
 
 ## 项目结构
 
@@ -226,13 +242,12 @@ translation-combinator/
 │   ├── tts.py           # TTS 提供方实现（edge/gtts/azure/openai/gcloud）
 │   ├── mixer.py         # TTS 片段生成、时间轴对齐、音频混音
 │   └── requirements.txt # Python 依赖
-├── Dockerfile           # 多阶段构建（Go + Python + ffmpeg）
-├── frontend/            # Web 前端（HTML/CSS/JS）
-└── server/              # Go Web 服务
+├── Dockerfile           # API 服务构建（Go + Python + ffmpeg）
+├── frontend/            # Web 前端（独立部署）
+└── server/              # Go API 服务
     ├── cmd/server/      # 入口
     ├── domain/          # 领域模型（Job, Storage, Translator）
     ├── application/     # 应用服务（JobService, WorkerService）
     ├── infrastructure/  # 基础设施（SQLite, R2, Python 调用）
-    ├── interfaces/http/ # HTTP 路由与处理器
-    └── web/             # 嵌入式前端资源
+    └── interfaces/http/ # HTTP 路由与处理器
 ```
