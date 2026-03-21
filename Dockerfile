@@ -8,7 +8,7 @@ RUN go mod download
 # Copy frontend into embed directory before building
 COPY frontend/ ./web/static/
 COPY server/ ./
-RUN CGO_ENABLED=0 go build -o /app ./cmd/server
+RUN CGO_ENABLED=0 go build -tags docker -o /app ./cmd/server
 
 # Stage 2: Runtime with Python + ffmpeg
 FROM python:3.11-slim-bookworm

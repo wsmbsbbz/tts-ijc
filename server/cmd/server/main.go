@@ -73,9 +73,15 @@ func main() {
 	uploadHandler := httpintf.NewUploadHandler(uploadSvc)
 
 	// Embedded frontend: web/static/ → served at /
-	frontendFS, err := fs.Sub(web.StaticFS, "static")
-	if err != nil {
-		log.Fatalf("embed frontend: %v", err)
+	// StaticFS is nil in local builds (no "docker" build tag).
+	var frontendFS fs.FS
+	if web.StaticFS != nil {
+		sub, err := fs.Sub(web.StaticFS, "static")
+		if err != nil {
+			log.Printf("WARN: embedded frontend not available: %v", err)
+		} else {
+			frontendFS = sub
+		}
 	}
 
 	router := httpintf.NewRouter(jobHandler, uploadHandler, frontendFS,

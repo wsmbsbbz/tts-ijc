@@ -1,9 +1,8 @@
 package web
 
-import "embed"
+import "io/fs"
 
-// StaticFS embeds the frontend static files.
-// The frontend/ directory is copied into web/static/ during Docker build.
-//
-//go:embed static
-var StaticFS embed.FS
+// StaticFS holds the frontend static files.
+// In Docker builds (tag "docker"), files are embedded from static/.
+// In local builds, this is nil and the frontend is not served.
+var StaticFS fs.FS
