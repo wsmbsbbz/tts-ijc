@@ -1,73 +1,163 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Translation Combinator</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,200..800&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>Translation Combinator</h1>
-      <p class="subtitle">上传音频 + 翻译字幕，生成带翻译旁白的音频</p>
-    </header>
+  <div class="bg-grid"></div>
+  <div class="bg-glow"></div>
+
+  <header class="header">
+    <div class="logo">
+      <div class="logo-icon">
+        <div class="wave-bars">
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+      </div>
+      <span class="logo-text">Translation<em>Combinator</em></span>
+    </div>
+    <div class="header-badge">TTS Studio</div>
+  </header>
+
+  <main class="main">
 
     <!-- Upload Section -->
     <section id="upload-section" class="card">
-      <h2>创建任务</h2>
-      <div class="form-group">
-        <label for="audio-file">音频文件</label>
-        <input type="file" id="audio-file" accept="audio/*">
-      </div>
-      <div class="form-group">
-        <label for="vtt-file">VTT 字幕文件</label>
-        <input type="file" id="vtt-file" accept=".vtt">
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="tts-provider">TTS 提供方</label>
-          <select id="tts-provider">
-            <option value="edge" selected>Edge (免费, 推荐)</option>
-            <option value="gtts">gTTS (免费)</option>
-            <option value="azure">Azure</option>
-            <option value="openai">OpenAI</option>
-            <option value="gcloud">Google Cloud</option>
-          </select>
+      <div class="card-label">New Job</div>
+      <h1 class="card-title">Synthesize Voice Over</h1>
+      <p class="card-desc">上传音频文件和 VTT 字幕，生成带翻译旁白的混音输出</p>
+
+      <div class="drop-row">
+        <div class="drop-zone" id="audio-drop">
+          <input type="file" id="audio-file" accept="audio/*" hidden />
+          <div class="drop-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/>
+            </svg>
+          </div>
+          <div class="drop-label">音频文件</div>
+          <div class="drop-hint">MP3 · M4A · WAV · OGG</div>
+          <div class="drop-selected" id="audio-name"></div>
+          <div class="drop-progress" id="audio-progress"></div>
         </div>
-        <div class="form-group">
-          <label for="tts-volume">TTS 音量: <span id="volume-value">0.08</span></label>
-          <input type="range" id="tts-volume" min="0" max="0.3" step="0.01" value="0.08">
+
+        <div class="drop-zone" id="vtt-drop">
+          <input type="file" id="vtt-file" accept=".vtt" hidden />
+          <div class="drop-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+              <polyline points="10 9 9 9 8 9"/>
+            </svg>
+          </div>
+          <div class="drop-label">字幕文件</div>
+          <div class="drop-hint">WebVTT 格式</div>
+          <div class="drop-selected" id="vtt-name"></div>
+          <div class="drop-progress" id="vtt-progress"></div>
         </div>
       </div>
-      <button id="submit-btn" class="btn-primary" disabled>开始处理</button>
-      <div id="upload-progress" class="progress-bar" hidden>
-        <div class="progress-fill"></div>
-        <span class="progress-text">上传中...</span>
+
+      <div class="options-row">
+        <div class="field">
+          <label class="field-label">TTS 引擎</label>
+          <div class="select-wrap">
+            <select id="tts-provider" class="field-select">
+              <option value="edge">Edge TTS (Microsoft)</option>
+              <option value="gtts">gTTS (Google)</option>
+              <option value="azure">Azure Cognitive</option>
+              <option value="openai">OpenAI TTS</option>
+              <option value="gcloud">Google Cloud</option>
+            </select>
+            <div class="select-arrow">
+              <svg viewBox="0 0 10 6" fill="currentColor"><path d="M0 0l5 6 5-6z"/></svg>
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">TTS 音量 &nbsp;<span id="vol-display" class="vol-val">0.08</span></label>
+          <input type="range" id="tts-volume" min="0" max="0.3" step="0.01" value="0.08" class="field-range" />
+        </div>
+
+        <div class="field field-check">
+          <label class="check-label">
+            <input type="checkbox" id="no-speedup" />
+            <span class="check-box"></span>
+            <span>禁用加速</span>
+          </label>
+        </div>
       </div>
+
+      <button id="submit-btn" class="btn-primary" disabled>
+        <span class="btn-text">开始处理</span>
+        <span class="btn-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/>
+          </svg>
+        </span>
+      </button>
     </section>
 
     <!-- Job Status Section -->
-    <section id="job-section" class="card" hidden>
-      <h2>任务状态</h2>
-      <div id="job-status" class="status-container">
-        <div class="status-badge queued">排队中</div>
-        <p id="job-progress" class="progress-text"></p>
+    <section id="job-section" class="card job-card" hidden>
+      <div class="card-label">Processing</div>
+
+      <div class="job-status-block">
+        <div class="status-indicator" id="status-led"></div>
+        <div class="job-info">
+          <div class="job-id-text" id="job-id-display"></div>
+          <div class="job-progress-text" id="job-progress">初始化中…</div>
+        </div>
       </div>
-      <a id="download-link" class="btn-primary" hidden download>下载结果</a>
-      <button id="new-job-btn" class="btn-secondary" hidden>创建新任务</button>
+
+      <div class="waveform-progress">
+        <div class="waveform-bars" id="waveform-bars"></div>
+        <div class="progress-overlay" id="progress-overlay"></div>
+      </div>
+
+      <div class="job-actions">
+        <button id="download-btn" class="btn-success" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          下载结果
+        </button>
+        <button id="new-job-btn" class="btn-outline" hidden>新建任务</button>
+      </div>
     </section>
 
-    <!-- Recent Jobs -->
-    <section id="history-section" class="card">
-      <h2>最近任务</h2>
-      <div id="job-list" class="job-list">
-        <p class="empty-state">暂无任务</p>
-      </div>
-    </section>
-  </div>
+  </main>
 
-  <script src="config.local.js"></script>
-  <script src="app.js"></script>
+  <!-- Recent Jobs -->
+  <section class="recent-section">
+    <div class="recent-header">
+      <h2 class="recent-title">最近任务</h2>
+      <button id="refresh-btn" class="btn-ghost">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+          <polyline points="23 4 23 10 17 10"/>
+          <polyline points="1 20 1 14 7 14"/>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+        </svg>
+        刷新
+      </button>
+    </div>
+    <div id="job-list" class="job-list">
+      <div class="job-list-empty">暂无任务</div>
+    </div>
+  </section>
+
+  <script src="config.local.js" onerror="void 0"></script>
+  <script src="app.js" type="module"></script>
 </body>
 </html>

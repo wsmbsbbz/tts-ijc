@@ -1,206 +1,328 @@
-// API base URL — set via global window.API_BASE or default to same origin.
-// In production (Cloudflare Pages etc.), configure this in index.html:
-//   <script>window.API_BASE = 'https://api.example.com';</script>
+// app.js — Translation Combinator (modern ES module)
+// API base: set via window.API_BASE (e.g. in index.html or config.local.js)
+
 const API = (window.API_BASE || '').replace(/\/+$/, '');
 
-// --- DOM refs ---
-const audioInput = document.getElementById('audio-file');
-const vttInput = document.getElementById('vtt-file');
-const ttsProvider = document.getElementById('tts-provider');
-const ttsVolume = document.getElementById('tts-volume');
-const volumeValue = document.getElementById('volume-value');
-const submitBtn = document.getElementById('submit-btn');
-const uploadProgress = document.getElementById('upload-progress');
-const uploadSection = document.getElementById('upload-section');
-const jobSection = document.getElementById('job-section');
-const jobStatus = document.getElementById('job-status');
-const jobProgress = document.getElementById('job-progress');
-const downloadLink = document.getElementById('download-link');
-const newJobBtn = document.getElementById('new-job-btn');
-const jobList = document.getElementById('job-list');
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
 
-// --- State ---
+const uploadSection = $('upload-section');
+const jobSection    = $('job-section');
+
+const audioInput  = $('audio-file');
+const vttInput    = $('vtt-file');
+const audioDrop   = $('audio-drop');
+const vttDrop     = $('vtt-drop');
+const audioName   = $('audio-name');
+const vttName     = $('vtt-name');
+const audioBar    = $('audio-progress');
+const vttBar      = $('vtt-progress');
+
+const ttsProvider = $('tts-provider');
+const ttsVolume   = $('tts-volume');
+const volDisplay  = $('vol-display');
+const noSpeedup   = $('no-speedup');
+const submitBtn   = $('submit-btn');
+
+const statusLed   = $('status-led');
+const jobIdEl     = $('job-id-display');
+const jobProgress = $('job-progress');
+const progressOverlay = $('progress-overlay');
+const waveformBars    = $('waveform-bars');
+
+const downloadBtn = $('download-btn');
+const newJobBtn   = $('new-job-btn');
+const refreshBtn  = $('refresh-btn');
+const jobList     = $('job-list');
+
+// ── State ─────────────────────────────────────────────────────────────────────
 let pollingTimer = null;
 
-// --- Init ---
-ttsVolume.addEventListener('input', () => {
-  volumeValue.textContent = ttsVolume.value;
-});
+// ── Init ──────────────────────────────────────────────────────────────────────
+initDropZone(audioDrop, audioInput, audioName);
+initDropZone(vttDrop,   vttInput,   vttName);
+buildWaveform();
 
-audioInput.addEventListener('change', updateSubmitState);
-vttInput.addEventListener('change', updateSubmitState);
+ttsVolume.addEventListener('input', () => {
+  volDisplay.textContent = parseFloat(ttsVolume.value).toFixed(2);
+});
 
 submitBtn.addEventListener('click', handleSubmit);
 newJobBtn.addEventListener('click', resetToUpload);
+refreshBtn.addEventListener('click', loadRecentJobs);
 
 loadRecentJobs();
 
-function updateSubmitState() {
-  submitBtn.disabled = !(audioInput.files.length && vttInput.files.length);
+// ── Drop Zone ─────────────────────────────────────────────────────────────────
+function initDropZone(zone, input, nameEl) {
+  zone.addEventListener('click', () => input.click());
+
+  input.addEventListener('change', () => {
+    if (input.files[0]) selectFile(zone, nameEl, input.files[0].name);
+  });
+
+  zone.addEventListener('dragover', e => {
+    e.preventDefault();
+    zone.classList.add('drag-over');
+  });
+
+  zone.addEventListener('dragleave', e => {
+    if (!zone.contains(e.relatedTarget)) zone.classList.remove('drag-over');
+  });
+
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+    selectFile(zone, nameEl, file.name);
+  });
 }
 
-// --- Upload & Create Job ---
-async function handleSubmit() {
-  submitBtn.disabled = true;
-  uploadProgress.hidden = false;
-  setUploadProgress(0, '上传音频文件...');
+function selectFile(zone, nameEl, filename) {
+  nameEl.textContent = filename;
+  zone.classList.add('has-file');
+  updateSubmitState();
+}
 
-  try {
-    const audioKey = await uploadFile(audioInput.files[0], () => setUploadProgress(30, '上传音频文件...'));
-    setUploadProgress(50, '上传字幕文件...');
-    const vttKey = await uploadFile(vttInput.files[0], () => setUploadProgress(70, '上传字幕文件...'));
-    setUploadProgress(90, '创建任务...');
+function updateSubmitState() {
+  submitBtn.disabled = !(audioInput.files[0] && vttInput.files[0]);
+}
 
-    const job = await createJob(audioKey, vttKey);
-    setUploadProgress(100, '任务已创建');
-
-    showJobStatus(job);
-    startPolling(job.job_id);
-  } catch (err) {
-    alert('操作失败: ' + err.message);
-    submitBtn.disabled = false;
-    uploadProgress.hidden = true;
+// ── Waveform ──────────────────────────────────────────────────────────────────
+function buildWaveform() {
+  const count = 52;
+  for (let i = 0; i < count; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    const pct = 22 + Math.abs(Math.sin(i * 0.38 + 0.5)) * 50 + Math.random() * 18;
+    bar.style.height = `${Math.round(pct)}%`;
+    bar.style.setProperty('--dur',   `${(0.75 + Math.random() * 0.9).toFixed(2)}s`);
+    bar.style.setProperty('--delay', `${(i * 0.038).toFixed(2)}s`);
+    waveformBars.appendChild(bar);
   }
 }
 
-async function uploadFile(file) {
-  const resp = await fetch(API + '/api/upload-url', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filename: file.name, content_type: file.type || 'application/octet-stream' }),
+function paintWaveform(pct) {
+  const bars = waveformBars.querySelectorAll('.bar');
+  const filled = Math.round((pct / 100) * bars.length);
+  bars.forEach((b, i) => {
+    if (i < filled) {
+      b.style.background = `linear-gradient(to top, var(--teal), var(--violet))`;
+      b.style.opacity = '0.75';
+    } else {
+      b.style.background = '';
+      b.style.opacity = '';
+    }
   });
-
-  if (!resp.ok) throw new Error('获取上传链接失败');
-  const { upload_url, object_key } = await resp.json();
-
-  const putResp = await fetch(upload_url, {
-    method: 'PUT',
-    headers: { 'Content-Type': file.type || 'application/octet-stream' },
-    body: file,
-  });
-
-  if (!putResp.ok) throw new Error('文件上传失败');
-  return object_key;
+  progressOverlay.style.width = `${pct}%`;
 }
 
-async function createJob(audioKey, vttKey) {
-  const resp = await fetch(API + '/api/jobs', {
+// ── Submit ────────────────────────────────────────────────────────────────────
+async function handleSubmit() {
+  if (!audioInput.files[0] || !vttInput.files[0]) return;
+
+  submitBtn.disabled = true;
+  submitBtn.querySelector('.btn-text').textContent = '上传中…';
+
+  try {
+    const [audioKey, vttKey] = await Promise.all([
+      uploadFile(audioInput.files[0], audioBar),
+      uploadFile(vttInput.files[0],   vttBar),
+    ]);
+
+    submitBtn.querySelector('.btn-text').textContent = '创建任务…';
+    const job = await createJob(audioKey, vttKey);
+
+    showJobSection(job);
+    startPolling(job.job_id);
+  } catch (err) {
+    console.error(err);
+    alert('操作失败: ' + err.message);
+    submitBtn.disabled = false;
+    submitBtn.querySelector('.btn-text').textContent = '开始处理';
+  }
+}
+
+async function uploadFile(file, progressEl) {
+  const res = await fetch(`${API}/api/upload-url`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      audio_key: audioKey,
-      vtt_key: vttKey,
-      tts_provider: ttsProvider.value,
-      tts_volume: parseFloat(ttsVolume.value),
-      no_speedup: false,
-      concurrency: 5,
+      filename: file.name,
+      content_type: file.type || 'application/octet-stream',
     }),
   });
+  if (!res.ok) throw new Error('获取上传链接失败');
+  const { upload_url, object_key } = await res.json();
 
-  if (!resp.ok) {
-    const data = await resp.json().catch(() => ({}));
-    throw new Error(data.error || '创建任务失败');
-  }
-  return resp.json();
+  await xhrUpload(file, upload_url, pct => { progressEl.style.width = `${pct}%`; });
+  return object_key;
 }
 
-// --- Job Status ---
-function showJobStatus(job) {
+function xhrUpload(file, url, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.upload.addEventListener('progress', e => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    });
+    xhr.addEventListener('load', () => {
+      onProgress(100);
+      xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`上传失败: ${xhr.status}`));
+    });
+    xhr.addEventListener('error', () => reject(new Error('网络错误')));
+    xhr.open('PUT', url);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.send(file);
+  });
+}
+
+async function createJob(audioKey, vttKey) {
+  const res = await fetch(`${API}/api/jobs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      audio_key:    audioKey,
+      vtt_key:      vttKey,
+      tts_provider: ttsProvider.value,
+      tts_volume:   parseFloat(ttsVolume.value),
+      no_speedup:   noSpeedup.checked,
+      concurrency:  5,
+    }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || '创建任务失败');
+  }
+  return res.json();
+}
+
+// ── Job Section ───────────────────────────────────────────────────────────────
+function showJobSection(job) {
   uploadSection.hidden = true;
   jobSection.hidden = false;
-  downloadLink.hidden = true;
-  newJobBtn.hidden = true;
+  jobSection.classList.add('fade-in');
   updateJobDisplay(job);
 }
 
 function updateJobDisplay(job) {
-  const badge = jobStatus.querySelector('.status-badge');
-  badge.className = 'status-badge ' + job.status;
+  const { status, job_id, progress, error, download_url } = job;
 
-  const labels = { queued: '排队中', processing: '处理中', completed: '已完成', failed: '失败' };
-  badge.textContent = labels[job.status] || job.status;
+  statusLed.className = `status-indicator ${status}`;
+  jobIdEl.textContent = `Job · ${job_id}`;
 
-  jobProgress.textContent = job.progress || '';
-
-  if (job.status === 'completed' && job.download_url) {
-    downloadLink.href = job.download_url;
-    downloadLink.hidden = false;
-    downloadLink.textContent = '下载结果';
+  if (status === 'failed') {
+    jobProgress.textContent = error || '处理失败';
+    jobProgress.style.color = 'var(--s-fail)';
     newJobBtn.hidden = false;
+    paintWaveform(0);
+    return;
   }
 
-  if (job.status === 'failed') {
-    jobProgress.textContent = '错误: ' + (job.error || '未知错误');
+  jobProgress.style.color = '';
+  jobProgress.textContent = progress || statusLabel(status);
+
+  const pct = computeProgress(status, progress);
+  paintWaveform(pct);
+
+  if (status === 'completed') {
+    downloadBtn.hidden = false;
     newJobBtn.hidden = false;
+    if (download_url) downloadBtn.onclick = () => window.open(download_url, '_blank');
   }
 }
 
+function statusLabel(s) {
+  return { queued: '等待队列…', processing: '正在合成音频…', completed: '处理完成', failed: '处理失败' }[s] || s;
+}
+
+function computeProgress(status, progress) {
+  if (status === 'completed') return 100;
+  if (status === 'queued')    return 5;
+  if (progress) {
+    const m = progress.match(/(\d+)\/(\d+)/);
+    if (m) return Math.round((parseInt(m[1]) / parseInt(m[2])) * 100);
+  }
+  return 35;
+}
+
+// ── Polling ───────────────────────────────────────────────────────────────────
 function startPolling(jobId) {
   stopPolling();
   pollingTimer = setInterval(async () => {
     try {
-      const resp = await fetch(API + '/api/jobs/' + jobId);
-      if (!resp.ok) return;
-      const job = await resp.json();
+      const res = await fetch(`${API}/api/jobs/${jobId}`);
+      if (!res.ok) return;
+      const job = await res.json();
       updateJobDisplay(job);
-
       if (job.status === 'completed' || job.status === 'failed') {
         stopPolling();
         loadRecentJobs();
       }
-    } catch { /* ignore polling errors */ }
+    } catch { /* ignore transient polling errors */ }
   }, 3000);
 }
 
 function stopPolling() {
-  if (pollingTimer) {
-    clearInterval(pollingTimer);
-    pollingTimer = null;
-  }
+  if (pollingTimer) { clearInterval(pollingTimer); pollingTimer = null; }
 }
 
-function resetToUpload() {
-  stopPolling();
-  uploadSection.hidden = false;
-  jobSection.hidden = true;
-  uploadProgress.hidden = true;
-  audioInput.value = '';
-  vttInput.value = '';
-  submitBtn.disabled = true;
-  loadRecentJobs();
-}
-
-// --- Recent Jobs ---
+// ── Recent Jobs ───────────────────────────────────────────────────────────────
 async function loadRecentJobs() {
   try {
-    const resp = await fetch(API + '/api/jobs');
-    if (!resp.ok) return;
-    const jobs = await resp.json();
-    renderJobList(jobs);
+    const res = await fetch(`${API}/api/jobs`);
+    if (!res.ok) return;
+    renderJobList(await res.json());
   } catch { /* ignore */ }
 }
 
 function renderJobList(jobs) {
-  if (!jobs || jobs.length === 0) {
-    jobList.innerHTML = '<p class="empty-state">暂无任务</p>';
+  if (!jobs?.length) {
+    jobList.innerHTML = '<div class="job-list-empty">暂无任务</div>';
     return;
   }
-
-  jobList.innerHTML = jobs.map(j => {
-    const time = new Date(j.created_at).toLocaleString('zh-CN');
-    const shortId = j.job_id.slice(0, 8);
-    return `
-      <div class="job-item">
-        <span class="job-item-id">${shortId}</span>
-        <span class="status-badge ${j.status}">${j.status}</span>
-        <span class="job-item-time">${time}</span>
-      </div>
-    `;
-  }).join('');
+  jobList.innerHTML = jobs.map(j => `
+    <div class="job-item">
+      <div class="job-dot ${j.status}"></div>
+      <div class="job-item-id">${j.job_id}</div>
+      <div class="job-badge ${j.status}">${j.status}</div>
+      <div class="job-time">${fmtTime(j.created_at)}</div>
+    </div>
+  `).join('');
 }
 
-// --- Helpers ---
-function setUploadProgress(pct, text) {
-  uploadProgress.querySelector('.progress-fill').style.width = pct + '%';
-  uploadProgress.querySelector('.progress-text').textContent = text;
+function fmtTime(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleString('zh-CN', {
+    month: 'numeric', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
+// ── Reset ─────────────────────────────────────────────────────────────────────
+function resetToUpload() {
+  stopPolling();
+  uploadSection.hidden = false;
+  jobSection.hidden = true;
+  uploadSection.classList.add('fade-in');
+
+  audioInput.value = '';
+  vttInput.value = '';
+  audioDrop.classList.remove('has-file');
+  vttDrop.classList.remove('has-file');
+  audioName.textContent = '';
+  vttName.textContent = '';
+  audioBar.style.width = '0%';
+  vttBar.style.width = '0%';
+
+  downloadBtn.hidden = true;
+  newJobBtn.hidden = true;
+  jobProgress.style.color = '';
+  submitBtn.disabled = true;
+  submitBtn.querySelector('.btn-text').textContent = '开始处理';
+
+  loadRecentJobs();
 }
