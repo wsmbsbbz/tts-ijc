@@ -55,32 +55,32 @@ pip install google-cloud-texttospeech         # Google Cloud
 ## 快速开始
 
 ```bash
-python main.py audio.mp3 audio.vtt output.mp3
+python cli/main.py audio.mp3 audio.vtt output.mp3
 ```
 
 ## 用法
 
 ```
-python main.py <input_audio> <input_vtt> <output_audio> [选项]
+python cli/main.py <input_audio> <input_vtt> <output_audio> [选项]
 ```
 
 ### 基本示例
 
 ```bash
 # 使用默认 Edge TTS（免费，推荐）
-python main.py audio.mp3 audio.vtt output.mp3
+python cli/main.py audio.mp3 audio.vtt output.mp3
 
 # 指定 Edge TTS 语音
-python main.py audio.mp3 audio.vtt output.mp3 --tts edge --edge-voice zh-TW-HsiaoChenNeural
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts edge --edge-voice zh-TW-HsiaoChenNeural
 
 # 使用 gTTS（免费）
-python main.py audio.mp3 audio.vtt output.mp3 --tts gtts
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts gtts
 
 # 调整 TTS 音量（默认 0.08，范围 0–1）
-python main.py audio.mp3 audio.vtt output.mp3 --tts-volume 0.12
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts-volume 0.12
 
 # 禁用自动加速（保持 TTS 原速）
-python main.py audio.mp3 audio.vtt output.mp3 --no-speedup
+python cli/main.py audio.mp3 audio.vtt output.mp3 --no-speedup
 ```
 
 ### TTS 提供方对比
@@ -97,20 +97,20 @@ python main.py audio.mp3 audio.vtt output.mp3 --no-speedup
 
 ```bash
 # Azure（推荐付费选项，有免费额度）
-python main.py audio.mp3 audio.vtt output.mp3 --tts azure \
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts azure \
     --azure-key YOUR_KEY --azure-region eastus
 
 # 或通过环境变量传入 key
 export AZURE_TTS_KEY=YOUR_KEY
 export AZURE_TTS_REGION=eastus
-python main.py audio.mp3 audio.vtt output.mp3 --tts azure
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts azure
 
 # OpenAI
-python main.py audio.mp3 audio.vtt output.mp3 --tts openai --openai-key YOUR_KEY
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts openai --openai-key YOUR_KEY
 
 # Google Cloud
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
-python main.py audio.mp3 audio.vtt output.mp3 --tts gcloud
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts gcloud
 ```
 
 ## 完整参数说明
@@ -176,12 +176,94 @@ Today we'll discuss an important topic.
 
 **WAV 自动压缩** — 若输入和输出均为 WAV，输出自动转为 MP3（体积约缩小 10x）。
 
+## Web 服务模式
+
+除了 CLI 之外，项目还提供了基于 Go 的 Web 服务，支持通过浏览器上传音频和字幕文件，异步完成翻译混音任务。
+
+前端与 API 服务**独立部署**：Go 服务仅提供 API，前端为纯静态站点，可部署到 Cloudflare Pages 等静态托管平台。
+
+### 架构
+
+- **Go API 服务**：DDD 分层架构（domain / application / infrastructure / interfaces），仅提供 `/api/*` 接口
+- **前端**：独立的 HTML/CSS/JS 静态站点，通过 `window.API_BASE` 配置 API 地址
+- **存储**：Cloudflare R2（S3 兼容），通过 Presigned URL 上传/下载
+- **任务队列**：SQLite + 内存队列，支持并发 Worker 处理
+- **底层 TTS**：通过调用 Python 脚本（cli/main.py）完成实际的 TTS 混音
+
+### 本地开发
+
+```bash
+# 1. 配置前端 API 地址
+cp frontend/config.local.example.js frontend/config.local.js
+# config.local.js 默认内容: window.API_BASE = 'http://localhost:8080'
+
+# 2. 启动 API 服务（需要配置 R2 等环境变量）
+cd server && go run ./cmd/server
+
+# 3. 启动前端（另一个终端）
+cd frontend && python3 -m http.server 3000
+
+# 浏览器访问 http://localhost:3000
+```
+
+### API 服务部署（Docker）
+
+```bash
+docker build -t translation-combinator .
+docker run -p 8080:8080 \
+  -e R2_ENDPOINT=https://your-r2-endpoint \
+  -e R2_ACCESS_KEY_ID=your-key-id \
+  -e R2_SECRET_ACCESS_KEY=your-secret \
+  -e R2_BUCKET_NAME=your-bucket \
+  translation-combinator
+```
+
+### 前端部署
+
+前端为纯静态文件（`frontend/` 目录），可直接部署到 Cloudflare Pages、Vercel、Netlify 等平台。
+
+部署时需配置 API 地址，在 `index.html` 的 `<script src="config.local.js">` 之前或平台环境变量中设置：
+
+```html
+<script>window.API_BASE = 'https://api.example.com';</script>
+```
+
+或者在平台的构建设置中将 `config.local.js` 生成为包含正确 API 地址的文件。
+
+### API 服务环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PORT` | `8080` | 服务监听端口 |
+| `DB_PATH` | `./data/jobs.db` | SQLite 数据库路径 |
+| `MAX_WORKERS` | `2` | 并发 Worker 数量 |
+| `JOB_TTL_HOURS` | `24` | 任务过期时间（小时） |
+| `QUEUE_SIZE` | `50` | 任务队列容量 |
+| `R2_ENDPOINT` | — | R2 存储端点 |
+| `R2_ACCESS_KEY_ID` | — | R2 Access Key |
+| `R2_SECRET_ACCESS_KEY` | — | R2 Secret Key |
+| `R2_BUCKET_NAME` | — | R2 存储桶名称 |
+| `PYTHON_BIN` | `python3` | Python 可执行文件路径 |
+| `PYTHON_DIR` | `/opt/tc` | Python 脚本所在目录 |
+| `AUTH_USER` | — | HTTP Basic Auth 用户名（留空则不启用） |
+| `AUTH_PASS` | — | HTTP Basic Auth 密码 |
+
 ## 项目结构
 
 ```
 translation-combinator/
-├── main.py     # CLI 入口，参数解析与主流程
-├── parser.py   # VTT 字幕解析
-├── tts.py      # TTS 提供方实现（edge/gtts/azure/openai/gcloud）
-└── mixer.py    # TTS 片段生成、时间轴对齐、音频混音
+├── cli/                 # Python CLI 工具
+│   ├── main.py          # CLI 入口，参数解析与主流程
+│   ├── parser.py        # VTT 字幕解析
+│   ├── tts.py           # TTS 提供方实现（edge/gtts/azure/openai/gcloud）
+│   ├── mixer.py         # TTS 片段生成、时间轴对齐、音频混音
+│   └── requirements.txt # Python 依赖
+├── Dockerfile           # API 服务构建（Go + Python + ffmpeg）
+├── frontend/            # Web 前端（独立部署）
+└── server/              # Go API 服务
+    ├── cmd/server/      # 入口
+    ├── domain/          # 领域模型（Job, Storage, Translator）
+    ├── application/     # 应用服务（JobService, WorkerService）
+    ├── infrastructure/  # 基础设施（SQLite, R2, Python 调用）
+    └── interfaces/http/ # HTTP 路由与处理器
 ```

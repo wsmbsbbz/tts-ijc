@@ -5,8 +5,6 @@ WORKDIR /build/server
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 
-# Copy frontend into embed directory before building
-COPY frontend/ ./web/static/
 COPY server/ ./
 RUN CGO_ENABLED=0 go build -o /app ./cmd/server
 
@@ -17,10 +15,10 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /opt/tc/requirements.txt
+COPY cli/requirements.txt /opt/tc/requirements.txt
 RUN pip install --no-cache-dir -r /opt/tc/requirements.txt
 
-COPY main.py parser.py mixer.py tts.py /opt/tc/
+COPY cli/ /opt/tc/
 
 COPY --from=go-builder /app /usr/local/bin/server
 

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -20,7 +19,6 @@ import (
 	"github.com/wsmbsbbz/tts-ijc/server/infrastructure/storage"
 	"github.com/wsmbsbbz/tts-ijc/server/infrastructure/translator"
 	httpintf "github.com/wsmbsbbz/tts-ijc/server/interfaces/http"
-	"github.com/wsmbsbbz/tts-ijc/server/web"
 )
 
 func main() {
@@ -72,13 +70,9 @@ func main() {
 	jobHandler := httpintf.NewJobHandler(jobSvc, r2)
 	uploadHandler := httpintf.NewUploadHandler(uploadSvc)
 
-	// Embedded frontend: web/static/ → served at /
-	frontendFS, err := fs.Sub(web.StaticFS, "static")
-	if err != nil {
-		log.Fatalf("embed frontend: %v", err)
-	}
-
-	router := httpintf.NewRouter(jobHandler, uploadHandler, frontendFS)
+	router := httpintf.NewRouter(jobHandler, uploadHandler,
+		httpintf.BasicAuth(cfg.AuthUser, cfg.AuthPass),
+	)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
