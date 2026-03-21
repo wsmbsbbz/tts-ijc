@@ -19,6 +19,9 @@ type Config struct {
 	R2AccessKeyID     string
 	R2SecretAccessKey string
 	R2BucketName      string
+
+	AuthUser string
+	AuthPass string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -36,6 +39,9 @@ func Load() Config {
 		R2AccessKeyID:     envStr("R2_ACCESS_KEY_ID", ""),
 		R2SecretAccessKey: envStr("R2_SECRET_ACCESS_KEY", ""),
 		R2BucketName:      envStr("R2_BUCKET_NAME", ""),
+
+		AuthUser: envStr("AUTH_USER", ""),
+		AuthPass: envStr("AUTH_PASS", ""),
 	}
 }
 

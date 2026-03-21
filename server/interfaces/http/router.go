@@ -8,7 +8,7 @@ import (
 
 // NewRouter creates the HTTP mux with all routes registered.
 // frontendFS should be the embedded frontend static files (or nil to skip).
-func NewRouter(jobHandler *JobHandler, uploadHandler *UploadHandler, frontendFS fs.FS) http.Handler {
+func NewRouter(jobHandler *JobHandler, uploadHandler *UploadHandler, frontendFS fs.FS, opts ...func(http.Handler) http.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	// API routes
@@ -31,8 +31,11 @@ func NewRouter(jobHandler *JobHandler, uploadHandler *UploadHandler, frontendFS 
 		mux.Handle("/", http.FileServer(http.FS(frontendFS)))
 	}
 
-	// Apply middleware stack: CORS → Logging → Recovery → mux
+	// Apply middleware stack: CORS → Logging → Recovery → (optional) → mux
 	var handler http.Handler = mux
+	for _, mw := range opts {
+		handler = mw(handler)
+	}
 	handler = Recovery(handler)
 	handler = Logging(handler)
 	handler = CORS(handler)

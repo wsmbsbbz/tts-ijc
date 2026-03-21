@@ -78,7 +78,9 @@ func main() {
 		log.Fatalf("embed frontend: %v", err)
 	}
 
-	router := httpintf.NewRouter(jobHandler, uploadHandler, frontendFS)
+	router := httpintf.NewRouter(jobHandler, uploadHandler, frontendFS,
+		httpintf.BasicAuth(cfg.AuthUser, cfg.AuthPass),
+	)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
