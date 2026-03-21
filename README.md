@@ -55,32 +55,32 @@ pip install google-cloud-texttospeech         # Google Cloud
 ## 快速开始
 
 ```bash
-python main.py audio.mp3 audio.vtt output.mp3
+python cli/main.py audio.mp3 audio.vtt output.mp3
 ```
 
 ## 用法
 
 ```
-python main.py <input_audio> <input_vtt> <output_audio> [选项]
+python cli/main.py <input_audio> <input_vtt> <output_audio> [选项]
 ```
 
 ### 基本示例
 
 ```bash
 # 使用默认 Edge TTS（免费，推荐）
-python main.py audio.mp3 audio.vtt output.mp3
+python cli/main.py audio.mp3 audio.vtt output.mp3
 
 # 指定 Edge TTS 语音
-python main.py audio.mp3 audio.vtt output.mp3 --tts edge --edge-voice zh-TW-HsiaoChenNeural
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts edge --edge-voice zh-TW-HsiaoChenNeural
 
 # 使用 gTTS（免费）
-python main.py audio.mp3 audio.vtt output.mp3 --tts gtts
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts gtts
 
 # 调整 TTS 音量（默认 0.08，范围 0–1）
-python main.py audio.mp3 audio.vtt output.mp3 --tts-volume 0.12
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts-volume 0.12
 
 # 禁用自动加速（保持 TTS 原速）
-python main.py audio.mp3 audio.vtt output.mp3 --no-speedup
+python cli/main.py audio.mp3 audio.vtt output.mp3 --no-speedup
 ```
 
 ### TTS 提供方对比
@@ -97,20 +97,20 @@ python main.py audio.mp3 audio.vtt output.mp3 --no-speedup
 
 ```bash
 # Azure（推荐付费选项，有免费额度）
-python main.py audio.mp3 audio.vtt output.mp3 --tts azure \
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts azure \
     --azure-key YOUR_KEY --azure-region eastus
 
 # 或通过环境变量传入 key
 export AZURE_TTS_KEY=YOUR_KEY
 export AZURE_TTS_REGION=eastus
-python main.py audio.mp3 audio.vtt output.mp3 --tts azure
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts azure
 
 # OpenAI
-python main.py audio.mp3 audio.vtt output.mp3 --tts openai --openai-key YOUR_KEY
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts openai --openai-key YOUR_KEY
 
 # Google Cloud
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
-python main.py audio.mp3 audio.vtt output.mp3 --tts gcloud
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts gcloud
 ```
 
 ## 完整参数说明
@@ -186,7 +186,7 @@ Today we'll discuss an important topic.
 - **存储**：Cloudflare R2（S3 兼容），通过 Presigned URL 上传/下载
 - **任务队列**：SQLite + 内存队列，支持并发 Worker 处理
 - **前端**：嵌入式 HTML/CSS/JS，由 Go 二进制直接提供服务
-- **底层 TTS**：通过调用 Python 脚本（main.py）完成实际的 TTS 混音
+- **底层 TTS**：通过调用 Python 脚本（cli/main.py）完成实际的 TTS 混音
 
 ### Docker 部署
 
@@ -220,10 +220,12 @@ docker run -p 8080:8080 \
 
 ```
 translation-combinator/
-├── main.py              # CLI 入口，参数解析与主流程
-├── parser.py            # VTT 字幕解析
-├── tts.py               # TTS 提供方实现（edge/gtts/azure/openai/gcloud）
-├── mixer.py             # TTS 片段生成、时间轴对齐、音频混音
+├── cli/                 # Python CLI 工具
+│   ├── main.py          # CLI 入口，参数解析与主流程
+│   ├── parser.py        # VTT 字幕解析
+│   ├── tts.py           # TTS 提供方实现（edge/gtts/azure/openai/gcloud）
+│   ├── mixer.py         # TTS 片段生成、时间轴对齐、音频混音
+│   └── requirements.txt # Python 依赖
 ├── Dockerfile           # 多阶段构建（Go + Python + ffmpeg）
 ├── frontend/            # Web 前端（HTML/CSS/JS）
 └── server/              # Go Web 服务
