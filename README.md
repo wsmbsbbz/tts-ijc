@@ -180,15 +180,33 @@ Today we'll discuss an important topic.
 
 除了 CLI 之外，项目还提供了基于 Go 的 Web 服务，支持通过浏览器上传音频和字幕文件，异步完成翻译混音任务。
 
+前端与 API 服务**独立部署**：Go 服务仅提供 API，前端为纯静态站点，可部署到 Cloudflare Pages 等静态托管平台。
+
 ### 架构
 
-- **Go 服务端**：DDD 分层架构（domain / application / infrastructure / interfaces）
+- **Go API 服务**：DDD 分层架构（domain / application / infrastructure / interfaces），仅提供 `/api/*` 接口
+- **前端**：独立的 HTML/CSS/JS 静态站点，通过 `window.API_BASE` 配置 API 地址
 - **存储**：Cloudflare R2（S3 兼容），通过 Presigned URL 上传/下载
 - **任务队列**：SQLite + 内存队列，支持并发 Worker 处理
-- **前端**：独立的 HTML/CSS/JS，部署到 Cloudflare Pages 等静态托管，通过 `window.API_BASE` 配置 API 地址
 - **底层 TTS**：通过调用 Python 脚本（cli/main.py）完成实际的 TTS 混音
 
-### Docker 部署
+### 本地开发
+
+```bash
+# 1. 配置前端 API 地址
+cp frontend/config.local.example.js frontend/config.local.js
+# config.local.js 默认内容: window.API_BASE = 'http://localhost:8080'
+
+# 2. 启动 API 服务（需要配置 R2 等环境变量）
+cd server && go run ./cmd/server
+
+# 3. 启动前端（另一个终端）
+cd frontend && python3 -m http.server 3000
+
+# 浏览器访问 http://localhost:3000
+```
+
+### API 服务部署（Docker）
 
 ```bash
 docker build -t translation-combinator .
@@ -200,7 +218,19 @@ docker run -p 8080:8080 \
   translation-combinator
 ```
 
-### 环境变量
+### 前端部署
+
+前端为纯静态文件（`frontend/` 目录），可直接部署到 Cloudflare Pages、Vercel、Netlify 等平台。
+
+部署时需配置 API 地址，在 `index.html` 的 `<script src="config.local.js">` 之前或平台环境变量中设置：
+
+```html
+<script>window.API_BASE = 'https://api.example.com';</script>
+```
+
+或者在平台的构建设置中将 `config.local.js` 生成为包含正确 API 地址的文件。
+
+### API 服务环境变量
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
@@ -217,20 +247,6 @@ docker run -p 8080:8080 \
 | `PYTHON_DIR` | `/opt/tc` | Python 脚本所在目录 |
 | `AUTH_USER` | — | HTTP Basic Auth 用户名（留空则不启用） |
 | `AUTH_PASS` | — | HTTP Basic Auth 密码 |
-
-### 前端配置
-
-前端独立部署（如 Cloudflare Pages），通过 `window.API_BASE` 指定 API 服务地址。在 `index.html` 中添加：
-
-```html
-<script>window.API_BASE = 'https://api.example.com';</script>
-```
-
-本地开发时启动前端：
-
-```bash
-cd frontend && python3 -m http.server 3000
-```
 
 ## 项目结构
 
