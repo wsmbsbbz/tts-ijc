@@ -1,0 +1,53 @@
+package http
+
+import (
+	"encoding/json"
+	"io/fs"
+	"net/http"
+)
+
+// NewRouter creates the HTTP mux with all routes registered.
+// frontendFS should be the embedded frontend static files (or nil to skip).
+func NewRouter(jobHandler *JobHandler, uploadHandler *UploadHandler, frontendFS fs.FS) http.Handler {
+	mux := http.NewServeMux()
+
+	// API routes
+	mux.HandleFunc("/api/upload-url", uploadHandler.HandleRequestURL)
+	mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+		// Route to create or list based on method
+		switch r.Method {
+		case http.MethodPost:
+			jobHandler.HandleCreate(w, r)
+		case http.MethodGet:
+			jobHandler.HandleList(w, r)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	})
+	mux.HandleFunc("/api/jobs/", jobHandler.HandleGet)
+
+	// Frontend static files
+	if frontendFS != nil {
+		mux.Handle("/", http.FileServer(http.FS(frontendFS)))
+	}
+
+	// Apply middleware stack: CORS → Logging → Recovery → mux
+	var handler http.Handler = mux
+	handler = Recovery(handler)
+	handler = Logging(handler)
+	handler = CORS(handler)
+
+	return handler
+}
+
+// --- helpers ---
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, ErrorResponse{Error: msg})
+}

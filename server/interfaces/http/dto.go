@@ -1,0 +1,78 @@
+package http
+
+import (
+	"time"
+
+	"github.com/wsmbsbbz/tts-ijc/server/domain"
+)
+
+// --- Request DTOs ---
+
+// UploadURLRequest is the JSON body for POST /api/upload-url.
+type UploadURLRequest struct {
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+}
+
+// CreateJobRequest is the JSON body for POST /api/jobs.
+type CreateJobRequest struct {
+	AudioKey    string  `json:"audio_key"`
+	VTTKey      string  `json:"vtt_key"`
+	TTSProvider string  `json:"tts_provider"`
+	TTSVolume   float64 `json:"tts_volume"`
+	NoSpeedup   bool    `json:"no_speedup"`
+	Concurrency int     `json:"concurrency"`
+}
+
+// ToJobConfig converts the request DTO to a domain value object.
+func (r CreateJobRequest) ToJobConfig() domain.JobConfig {
+	return domain.JobConfig{
+		TTSProvider: r.TTSProvider,
+		TTSVolume:   r.TTSVolume,
+		NoSpeedup:   r.NoSpeedup,
+		Concurrency: r.Concurrency,
+	}
+}
+
+// --- Response DTOs ---
+
+// UploadURLResponse is returned by POST /api/upload-url.
+type UploadURLResponse struct {
+	UploadURL string `json:"upload_url"`
+	ObjectKey string `json:"object_key"`
+}
+
+// JobResponse is the JSON representation of a job.
+type JobResponse struct {
+	JobID       string  `json:"job_id"`
+	Status      string  `json:"status"`
+	Progress    string  `json:"progress"`
+	CreatedAt   string  `json:"created_at"`
+	CompletedAt *string `json:"completed_at"`
+	Error       *string `json:"error"`
+	DownloadURL *string `json:"download_url"`
+}
+
+// JobFromDomain converts a domain.Job to a response DTO.
+func JobFromDomain(j domain.Job, downloadURL string) JobResponse {
+	resp := JobResponse{
+		JobID:     j.ID,
+		Status:    string(j.Status),
+		Progress:  j.Progress,
+		CreatedAt: j.CreatedAt.Format(time.RFC3339),
+		Error:     j.Error,
+	}
+	if j.CompletedAt != nil {
+		s := j.CompletedAt.Format(time.RFC3339)
+		resp.CompletedAt = &s
+	}
+	if downloadURL != "" {
+		resp.DownloadURL = &downloadURL
+	}
+	return resp
+}
+
+// ErrorResponse is the JSON body for error responses.
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
