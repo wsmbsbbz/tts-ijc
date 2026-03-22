@@ -7,6 +7,19 @@ import (
 	"github.com/wsmbsbbz/tts-ijc/server/application"
 )
 
+// allowedContentTypes is the whitelist for presigned upload URLs.
+// Only audio files and VTT subtitles are accepted.
+var allowedContentTypes = map[string]bool{
+	"audio/mpeg":  true,
+	"audio/mp4":   true,
+	"audio/wav":   true,
+	"audio/ogg":   true,
+	"audio/webm":  true,
+	"audio/flac":  true,
+	"text/vtt":    true,
+	"text/plain":  true,
+}
+
 // UploadHandler handles presigned upload URL requests.
 type UploadHandler struct {
 	svc *application.UploadService
@@ -32,6 +45,11 @@ func (h *UploadHandler) HandleRequestURL(w http.ResponseWriter, r *http.Request)
 
 	if req.Filename == "" || req.ContentType == "" {
 		writeError(w, http.StatusBadRequest, "filename and content_type are required")
+		return
+	}
+
+	if !allowedContentTypes[req.ContentType] {
+		writeError(w, http.StatusUnsupportedMediaType, "unsupported content type")
 		return
 	}
 
