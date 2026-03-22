@@ -91,13 +91,7 @@ func main() {
 	authHandler := httpintf.NewAuthHandler(authSvc)
 	sessionAuth := httpintf.SessionAuth(authSvc)
 
-	router := httpintf.NewRouter(
-		jobHandler,
-		uploadHandler,
-		authHandler,
-		sessionAuth,
-		httpintf.BasicAuth(cfg.AuthUser, cfg.AuthPass),
-	)
+	router := httpintf.NewRouter(jobHandler, uploadHandler, authHandler, sessionAuth)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
@@ -126,12 +120,6 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server: %v", err)
 	}
-}
-
-// repoCloser wraps a JobRepository with a Close method.
-type repoCloser interface {
-	domain.JobRepository
-	Close() error
 }
 
 // initRepos selects the persistence backend based on config.

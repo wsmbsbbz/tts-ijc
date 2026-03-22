@@ -20,9 +20,6 @@ type Config struct {
 	R2SecretAccessKey string
 	R2BucketName      string
 
-	AuthUser string
-	AuthPass string
-
 	// DatabaseURL, when set, switches persistence to PostgreSQL.
 	// Falls back to SQLite (DBPath) when empty.
 	DatabaseURL string
@@ -48,9 +45,6 @@ func Load() Config {
 		R2AccessKeyID:     envStr("R2_ACCESS_KEY_ID", ""),
 		R2SecretAccessKey: envStr("R2_SECRET_ACCESS_KEY", ""),
 		R2BucketName:      envStr("R2_BUCKET_NAME", ""),
-
-		AuthUser: envStr("AUTH_USER", ""),
-		AuthPass: envStr("AUTH_PASS", ""),
 
 		DatabaseURL: envStr("DATABASE_URL", ""),
 

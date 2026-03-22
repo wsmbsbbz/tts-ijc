@@ -13,7 +13,6 @@ func NewRouter(
 	uploadHandler *UploadHandler,
 	authHandler *AuthHandler,
 	sessionAuth func(http.Handler) http.Handler,
-	opts ...func(http.Handler) http.Handler,
 ) http.Handler {
 	mux := http.NewServeMux()
 
@@ -47,12 +46,8 @@ func NewRouter(
 		mux.Handle("/", http.FileServer(http.Dir(dir)))
 	}
 
-	// Apply middleware stack: CORS → Logging → Recovery → (optional) → mux
-	var handler http.Handler = mux
-	for _, mw := range opts {
-		handler = mw(handler)
-	}
-	handler = Recovery(handler)
+	// Apply middleware stack: CORS → Logging → Recovery → mux
+	handler := Recovery(http.Handler(mux))
 	handler = Logging(handler)
 	handler = CORS(handler)
 
