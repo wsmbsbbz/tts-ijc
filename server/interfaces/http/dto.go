@@ -18,6 +18,8 @@ type UploadURLRequest struct {
 type CreateJobRequest struct {
 	AudioKey    string  `json:"audio_key"`
 	VTTKey      string  `json:"vtt_key"`
+	AudioName   string  `json:"audio_name"`
+	VTTName     string  `json:"vtt_name"`
 	TTSProvider string  `json:"tts_provider"`
 	TTSVolume   float64 `json:"tts_volume"`
 	NoSpeedup   bool    `json:"no_speedup"`
@@ -43,31 +45,30 @@ type UploadURLResponse struct {
 }
 
 // JobResponse is the JSON representation of a job.
+// DownloadURL is intentionally omitted; use GET /api/jobs/{id}/download instead.
 type JobResponse struct {
 	JobID       string  `json:"job_id"`
 	Status      string  `json:"status"`
 	Progress    string  `json:"progress"`
+	AudioName   string  `json:"audio_name"`
 	CreatedAt   string  `json:"created_at"`
 	CompletedAt *string `json:"completed_at"`
 	Error       *string `json:"error"`
-	DownloadURL *string `json:"download_url"`
 }
 
 // JobFromDomain converts a domain.Job to a response DTO.
-func JobFromDomain(j domain.Job, downloadURL string) JobResponse {
+func JobFromDomain(j domain.Job) JobResponse {
 	resp := JobResponse{
 		JobID:     j.ID,
 		Status:    string(j.Status),
 		Progress:  j.Progress,
+		AudioName: j.AudioName,
 		CreatedAt: j.CreatedAt.Format(time.RFC3339),
 		Error:     j.Error,
 	}
 	if j.CompletedAt != nil {
 		s := j.CompletedAt.Format(time.RFC3339)
 		resp.CompletedAt = &s
-	}
-	if downloadURL != "" {
-		resp.DownloadURL = &downloadURL
 	}
 	return resp
 }

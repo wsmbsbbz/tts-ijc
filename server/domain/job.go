@@ -28,6 +28,8 @@ type Job struct {
 	AudioKey    string
 	VTTKey      string
 	OutputKey   string
+	AudioName   string
+	VTTName     string
 	Config      JobConfig
 	CreatedAt   time.Time
 	CompletedAt *time.Time
@@ -35,7 +37,7 @@ type Job struct {
 }
 
 // NewJob creates a Job in queued state with sensible defaults.
-func NewJob(id, audioKey, vttKey string, cfg JobConfig) Job {
+func NewJob(id, audioKey, vttKey, audioName, vttName string, cfg JobConfig) Job {
 	if cfg.TTSProvider == "" {
 		cfg.TTSProvider = "edge"
 	}
@@ -51,6 +53,8 @@ func NewJob(id, audioKey, vttKey string, cfg JobConfig) Job {
 		Status:    StatusQueued,
 		AudioKey:  audioKey,
 		VTTKey:    vttKey,
+		AudioName: audioName,
+		VTTName:   vttName,
 		Config:    cfg,
 		CreatedAt: time.Now(),
 	}

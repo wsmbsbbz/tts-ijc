@@ -27,9 +27,9 @@ func NewJobService(repo domain.JobRepository, queue chan<- string, idFunc func()
 }
 
 // CreateJob validates config, persists a new job, and enqueues it for processing.
-func (s *JobService) CreateJob(ctx context.Context, audioKey, vttKey string, cfg domain.JobConfig) (domain.Job, error) {
+func (s *JobService) CreateJob(ctx context.Context, audioKey, vttKey, audioName, vttName string, cfg domain.JobConfig) (domain.Job, error) {
 	id := s.idFunc()
-	job := domain.NewJob(id, audioKey, vttKey, cfg)
+	job := domain.NewJob(id, audioKey, vttKey, audioName, vttName, cfg)
 
 	if err := s.repo.Save(ctx, job); err != nil {
 		return domain.Job{}, fmt.Errorf("save job: %w", err)

@@ -11,7 +11,7 @@ import (
 	"github.com/wsmbsbbz/tts-ijc/server/domain"
 )
 
-const downloadURLExpiry = 1 * time.Hour
+const downloadURLExpiry = 5 * time.Minute
 
 // JobHandler handles job-related HTTP requests.
 type JobHandler struct {
@@ -42,7 +42,7 @@ func (h *JobHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.jobSvc.CreateJob(r.Context(), req.AudioKey, req.VTTKey, req.ToJobConfig())
+	job, err := h.jobSvc.CreateJob(r.Context(), req.AudioKey, req.VTTKey, req.AudioName, req.VTTName, req.ToJobConfig())
 	if err != nil {
 		if errors.Is(err, domain.ErrQueueFull) {
 			writeError(w, http.StatusServiceUnavailable, "server is busy, please try again later")
@@ -52,7 +52,7 @@ func (h *JobHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, JobFromDomain(job, ""))
+	writeJSON(w, http.StatusCreated, JobFromDomain(job))
 }
 
 // HandleGet handles GET /api/jobs/{id}.
@@ -78,12 +78,7 @@ func (h *JobHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var downloadURL string
-	if job.Status == domain.StatusCompleted && job.OutputKey != "" {
-		downloadURL, _ = h.storage.GenerateDownloadURL(r.Context(), job.OutputKey, downloadURLExpiry)
-	}
-
-	writeJSON(w, http.StatusOK, JobFromDomain(job, downloadURL))
+	writeJSON(w, http.StatusOK, JobFromDomain(job))
 }
 
 // HandleList handles GET /api/jobs.
@@ -101,20 +96,69 @@ func (h *JobHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 
 	responses := make([]JobResponse, len(jobs))
 	for i, j := range jobs {
-		var downloadURL string
-		if j.Status == domain.StatusCompleted && j.OutputKey != "" {
-			downloadURL, _ = h.storage.GenerateDownloadURL(r.Context(), j.OutputKey, downloadURLExpiry)
-		}
-		responses[i] = JobFromDomain(j, downloadURL)
+		responses[i] = JobFromDomain(j)
 	}
 
 	writeJSON(w, http.StatusOK, responses)
+}
+
+// HandleDownload handles GET /api/jobs/{id}/download.
+// Generates a short-lived presigned URL and redirects the browser to it.
+// The presigned URL includes Content-Disposition so the browser saves the file
+// using the original audio filename.
+func (h *JobHandler) HandleDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	id := extractDownloadJobID(r.URL.Path)
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing job id")
+		return
+	}
+
+	job, err := h.jobSvc.GetJob(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, domain.ErrJobNotFound) {
+			writeError(w, http.StatusNotFound, "job not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get job")
+		return
+	}
+
+	if job.Status != domain.StatusCompleted || job.OutputKey == "" {
+		writeError(w, http.StatusConflict, "job output not ready")
+		return
+	}
+
+	downloadURL, err := h.storage.GenerateDownloadURL(r.Context(), job.OutputKey, downloadURLExpiry, job.AudioName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate download URL")
+		return
+	}
+
+	http.Redirect(w, r, downloadURL, http.StatusFound)
 }
 
 // extractJobID extracts the job ID from a path like /api/jobs/{id}.
 func extractJobID(path string) string {
 	parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
 	if len(parts) < 4 {
+		return ""
+	}
+	// Exclude /api/jobs/{id}/download
+	if len(parts) >= 5 {
+		return ""
+	}
+	return parts[3]
+}
+
+// extractDownloadJobID extracts the job ID from /api/jobs/{id}/download.
+func extractDownloadJobID(path string) string {
+	parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
+	if len(parts) < 5 || parts[4] != "download" {
 		return ""
 	}
 	return parts[3]

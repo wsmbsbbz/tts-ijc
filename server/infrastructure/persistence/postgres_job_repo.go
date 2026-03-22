@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wsmbsbbz/tts-ijc/server/domain"
@@ -32,6 +33,10 @@ func NewPostgresJobRepo(dsn string) (*PostgresJobRepo, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := migratePostgresTable(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	return &PostgresJobRepo{db: db}, nil
 }
@@ -45,6 +50,8 @@ func createPostgresTable(db *sql.DB) error {
 			audio_key    TEXT NOT NULL,
 			vtt_key      TEXT NOT NULL,
 			output_key   TEXT NOT NULL DEFAULT '',
+			audio_name   TEXT NOT NULL DEFAULT '',
+			vtt_name     TEXT NOT NULL DEFAULT '',
 			tts_provider TEXT NOT NULL DEFAULT 'edge',
 			tts_volume   DOUBLE PRECISION NOT NULL DEFAULT 0.08,
 			no_speedup   BOOLEAN NOT NULL DEFAULT FALSE,
@@ -60,6 +67,19 @@ func createPostgresTable(db *sql.DB) error {
 	return nil
 }
 
+// migratePostgresTable adds columns introduced after the initial schema (idempotent).
+func migratePostgresTable(db *sql.DB) error {
+	for _, stmt := range []string{
+		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_name TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS vtt_name   TEXT NOT NULL DEFAULT ''",
+	} {
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "already exists") {
+			return fmt.Errorf("migrate: %w", err)
+		}
+	}
+	return nil
+}
+
 // Close releases the database connection.
 func (r *PostgresJobRepo) Close() error {
 	return r.db.Close()
@@ -68,12 +88,14 @@ func (r *PostgresJobRepo) Close() error {
 func (r *PostgresJobRepo) Save(ctx context.Context, job domain.Job) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO jobs (id, status, progress, audio_key, vtt_key, output_key,
+		                  audio_name, vtt_name,
 		                  tts_provider, tts_volume, no_speedup, concurrency,
 		                  created_at, completed_at, error)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 	`,
 		job.ID, string(job.Status), job.Progress,
 		job.AudioKey, job.VTTKey, job.OutputKey,
+		job.AudioName, job.VTTName,
 		job.Config.TTSProvider, job.Config.TTSVolume,
 		job.Config.NoSpeedup, job.Config.Concurrency,
 		job.CreatedAt, job.CompletedAt,
@@ -88,6 +110,7 @@ func (r *PostgresJobRepo) Save(ctx context.Context, job domain.Job) error {
 func (r *PostgresJobRepo) FindByID(ctx context.Context, id string) (domain.Job, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, status, progress, audio_key, vtt_key, output_key,
+		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       created_at, completed_at, error
 		FROM jobs WHERE id = $1
@@ -98,6 +121,7 @@ func (r *PostgresJobRepo) FindByID(ctx context.Context, id string) (domain.Job, 
 func (r *PostgresJobRepo) ListRecent(ctx context.Context, limit int) ([]domain.Job, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, status, progress, audio_key, vtt_key, output_key,
+		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       created_at, completed_at, error
 		FROM jobs ORDER BY created_at DESC LIMIT $1
@@ -190,6 +214,7 @@ func scanPgJob(s scanner) (domain.Job, error) {
 	err := s.Scan(
 		&j.ID, &status, &j.Progress,
 		&j.AudioKey, &j.VTTKey, &j.OutputKey,
+		&j.AudioName, &j.VTTName,
 		&j.Config.TTSProvider, &j.Config.TTSVolume,
 		&j.Config.NoSpeedup, &j.Config.Concurrency,
 		&j.CreatedAt, &completedAt, &errMsg,

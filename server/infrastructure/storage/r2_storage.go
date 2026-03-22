@@ -55,10 +55,14 @@ func (s *R2Storage) GenerateUploadURL(ctx context.Context, key, contentType stri
 	return resp.URL, nil
 }
 
-func (s *R2Storage) GenerateDownloadURL(ctx context.Context, key string, expiry time.Duration) (string, error) {
+func (s *R2Storage) GenerateDownloadURL(ctx context.Context, key string, expiry time.Duration, filename string) (string, error) {
 	input := &s3.GetObjectInput{
 		Bucket: &s.bucketName,
 		Key:    &key,
+	}
+	if filename != "" {
+		cd := `attachment; filename="` + filename + `"`
+		input.ResponseContentDisposition = &cd
 	}
 
 	resp, err := s.presigner.PresignGetObject(ctx, input, s3.WithPresignExpires(expiry))

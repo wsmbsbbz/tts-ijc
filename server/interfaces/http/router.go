@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 )
 
 // NewRouter creates the HTTP mux with all API routes registered.
@@ -22,7 +23,13 @@ func NewRouter(jobHandler *JobHandler, uploadHandler *UploadHandler, opts ...fun
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	})
-	mux.HandleFunc("/api/jobs/", jobHandler.HandleGet)
+	mux.HandleFunc("/api/jobs/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/download") {
+			jobHandler.HandleDownload(w, r)
+		} else {
+			jobHandler.HandleGet(w, r)
+		}
+	})
 
 	// Static frontend (served when FRONTEND_DIR is set)
 	if dir := os.Getenv("FRONTEND_DIR"); dir != "" {

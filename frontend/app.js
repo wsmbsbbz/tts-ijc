@@ -36,7 +36,8 @@ const refreshBtn  = $('refresh-btn');
 const jobList     = $('job-list');
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let pollingTimer = null;
+let pollingTimer  = null;
+let currentJobId  = null;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 initDropZone(audioDrop, audioInput, audioName);
@@ -129,13 +130,13 @@ async function handleSubmit() {
   submitBtn.querySelector('.btn-text').textContent = '上传中…';
 
   try {
-    const [audioKey, vttKey] = await Promise.all([
+    const [audio, vtt] = await Promise.all([
       uploadFile(audioInput.files[0], audioBar),
       uploadFile(vttInput.files[0],   vttBar),
     ]);
 
     submitBtn.querySelector('.btn-text').textContent = '创建任务…';
-    const job = await createJob(audioKey, vttKey);
+    const job = await createJob(audio, vtt);
 
     showJobSection(job);
     startPolling(job.job_id);
@@ -147,6 +148,7 @@ async function handleSubmit() {
   }
 }
 
+// Returns { key, name } for the uploaded file.
 async function uploadFile(file, progressEl) {
   const res = await fetch(`${API}/api/upload-url`, {
     method: 'POST',
@@ -160,7 +162,7 @@ async function uploadFile(file, progressEl) {
   const { upload_url, object_key } = await res.json();
 
   await xhrUpload(file, upload_url, pct => { progressEl.style.width = `${pct}%`; });
-  return object_key;
+  return { key: object_key, name: file.name };
 }
 
 function xhrUpload(file, url, onProgress) {
@@ -180,13 +182,15 @@ function xhrUpload(file, url, onProgress) {
   });
 }
 
-async function createJob(audioKey, vttKey) {
+async function createJob(audio, vtt) {
   const res = await fetch(`${API}/api/jobs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      audio_key:    audioKey,
-      vtt_key:      vttKey,
+      audio_key:    audio.key,
+      vtt_key:      vtt.key,
+      audio_name:   audio.name,
+      vtt_name:     vtt.name,
       tts_provider: ttsProvider.value,
       tts_volume:   parseFloat(ttsVolume.value),
       no_speedup:   noSpeedup.checked,
@@ -205,14 +209,16 @@ function showJobSection(job) {
   uploadSection.hidden = true;
   jobSection.hidden = false;
   jobSection.classList.add('fade-in');
+  currentJobId = job.job_id;
   updateJobDisplay(job);
 }
 
 function updateJobDisplay(job) {
-  const { status, job_id, progress, error, download_url } = job;
+  const { status, job_id, audio_name, progress, error } = job;
 
   statusLed.className = `status-indicator ${status}`;
-  jobIdEl.textContent = `Job · ${job_id}`;
+  // Show original filename if available, fall back to job ID
+  jobIdEl.textContent = audio_name ? audio_name : `Job · ${job_id}`;
 
   if (status === 'failed') {
     jobProgress.textContent = error || '处理失败';
@@ -231,7 +237,7 @@ function updateJobDisplay(job) {
   if (status === 'completed') {
     downloadBtn.hidden = false;
     newJobBtn.hidden = false;
-    if (download_url) downloadBtn.onclick = () => window.open(download_url, '_blank');
+    downloadBtn.onclick = () => { window.location.href = `${API}/api/jobs/${job_id}/download`; };
   }
 }
 
@@ -287,11 +293,11 @@ function renderJobList(jobs) {
   jobList.innerHTML = jobs.map(j => `
     <div class="job-item">
       <div class="job-dot ${j.status}"></div>
-      <div class="job-item-id">${j.job_id}</div>
+      <div class="job-item-id">${j.audio_name || j.job_id}</div>
       <div class="job-badge ${j.status}">${j.status}</div>
       <div class="job-time">${fmtTime(j.created_at)}</div>
-      ${j.status === 'completed' && j.download_url
-        ? `<a class="job-download-link" href="${j.download_url}" target="_blank" rel="noopener">下载</a>`
+      ${j.status === 'completed'
+        ? `<a class="job-download-link" href="${API}/api/jobs/${j.job_id}/download">下载</a>`
         : ''}
     </div>
   `).join('');
@@ -308,6 +314,7 @@ function fmtTime(ts) {
 // ── Reset ─────────────────────────────────────────────────────────────────────
 function resetToUpload() {
   stopPolling();
+  currentJobId = null;
   uploadSection.hidden = false;
   jobSection.hidden = true;
   uploadSection.classList.add('fade-in');
