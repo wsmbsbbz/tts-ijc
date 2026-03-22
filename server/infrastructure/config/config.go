@@ -22,6 +22,10 @@ type Config struct {
 
 	AuthUser string
 	AuthPass string
+
+	// DatabaseURL, when set, switches persistence to PostgreSQL.
+	// Falls back to SQLite (DBPath) when empty.
+	DatabaseURL string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -42,6 +46,8 @@ func Load() Config {
 
 		AuthUser: envStr("AUTH_USER", ""),
 		AuthPass: envStr("AUTH_PASS", ""),
+
+		DatabaseURL: envStr("DATABASE_URL", ""),
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/wsmbsbbz/tts-ijc/server/application"
+	"github.com/wsmbsbbz/tts-ijc/server/domain"
 	"github.com/wsmbsbbz/tts-ijc/server/infrastructure/config"
 	"github.com/wsmbsbbz/tts-ijc/server/infrastructure/persistence"
 	"github.com/wsmbsbbz/tts-ijc/server/infrastructure/storage"
@@ -24,18 +25,11 @@ import (
 func main() {
 	cfg := config.Load()
 
-	// Ensure DB directory exists.
-	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o755); err != nil {
-		log.Fatalf("create db directory: %v", err)
-	}
+	// --- Persistence ---
+
+	repo := initRepo(cfg)
 
 	// --- Infrastructure ---
-
-	repo, err := persistence.NewSQLiteJobRepo(cfg.DBPath)
-	if err != nil {
-		log.Fatalf("init sqlite: %v", err)
-	}
-	defer repo.Close()
 
 	r2 := storage.NewR2Storage(
 		cfg.R2Endpoint,
@@ -101,4 +95,33 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server: %v", err)
 	}
+}
+
+// repoCloser wraps a JobRepository with a Close method.
+type repoCloser interface {
+	domain.JobRepository
+	Close() error
+}
+
+// initRepo selects the persistence backend based on config.
+// When DATABASE_URL is set, uses PostgreSQL; otherwise falls back to SQLite.
+func initRepo(cfg config.Config) repoCloser {
+	if cfg.DatabaseURL != "" {
+		repo, err := persistence.NewPostgresJobRepo(cfg.DatabaseURL)
+		if err != nil {
+			log.Fatalf("init postgres: %v", err)
+		}
+		log.Println("persistence: postgres")
+		return repo
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o755); err != nil {
+		log.Fatalf("create db directory: %v", err)
+	}
+	repo, err := persistence.NewSQLiteJobRepo(cfg.DBPath)
+	if err != nil {
+		log.Fatalf("init sqlite: %v", err)
+	}
+	log.Printf("persistence: sqlite (%s)", cfg.DBPath)
+	return repo
 }
