@@ -14,6 +14,7 @@ import (
 type UploadURLRequest struct {
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type"`
+	FileSize    int64  `json:"file_size"`
 }
 
 // CreateJobRequest is the JSON body for POST /api/jobs.
@@ -98,6 +99,16 @@ type LoginRequest struct {
 type AuthResponse struct {
 	Token     string `json:"token"`
 	ExpiresAt string `json:"expires_at"`
+}
+
+// MeResponse is returned by GET /api/me.
+type MeResponse struct {
+	Username             string `json:"username"`
+	ExpiresAt            string `json:"expires_at"`
+	TotalBytesUploaded   int64  `json:"total_bytes_uploaded"`
+	UploadLimitBytes     int64  `json:"upload_limit_bytes"`
+	TotalBytesDownloaded int64  `json:"total_bytes_downloaded"`
+	DownloadLimitBytes   int64  `json:"download_limit_bytes"`
 }
 
 // --- Helpers ---

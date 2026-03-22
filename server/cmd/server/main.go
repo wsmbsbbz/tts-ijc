@@ -54,7 +54,7 @@ func main() {
 	sessionTTL := time.Duration(cfg.SessionTTLHours) * time.Hour
 
 	jobSvc := application.NewJobService(jobRepo, queue, idFunc)
-	uploadSvc := application.NewUploadService(r2, idFunc)
+	uploadSvc := application.NewUploadService(r2, userRepo, idFunc, cfg.UserUploadLimitBytes)
 	workerSvc := application.NewWorkerService(jobRepo, r2, trans, queue)
 	authSvc := application.NewAuthService(userRepo, sessionRepo, idFunc, accountTTL, sessionTTL, cfg.MaxActiveAccounts)
 
@@ -86,9 +86,9 @@ func main() {
 
 	// --- HTTP ---
 
-	jobHandler := httpintf.NewJobHandler(jobSvc, r2, cfg.AllowedTTSProviders)
+	jobHandler := httpintf.NewJobHandler(jobSvc, r2, userRepo, cfg.AllowedTTSProviders, cfg.UserDownloadLimitBytes)
 	uploadHandler := httpintf.NewUploadHandler(uploadSvc)
-	authHandler := httpintf.NewAuthHandler(authSvc)
+	authHandler := httpintf.NewAuthHandler(authSvc, cfg.UserUploadLimitBytes, cfg.UserDownloadLimitBytes)
 	sessionAuth := httpintf.SessionAuth(authSvc)
 
 	router := httpintf.NewRouter(jobHandler, uploadHandler, authHandler, sessionAuth)

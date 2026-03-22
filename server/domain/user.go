@@ -4,12 +4,14 @@ import "time"
 
 // User is the domain entity representing a registered account.
 type User struct {
-	ID           string
-	Username     string
-	PasswordHash string
-	CreatedAt    time.Time
-	ExpiresAt    time.Time
-	IsActive     bool
+	ID                   string
+	Username             string
+	PasswordHash         string
+	CreatedAt            time.Time
+	ExpiresAt            time.Time
+	IsActive             bool
+	TotalBytesUploaded   int64
+	TotalBytesDownloaded int64
 }
 
 // Session represents an authenticated browser session.

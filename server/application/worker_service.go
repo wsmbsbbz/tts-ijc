@@ -122,12 +122,19 @@ func (w *WorkerService) processJob(ctx context.Context, workerID int, jobID stri
 	}
 	outputKey := fmt.Sprintf("outputs/%s/%s/%s.mp3", job.UserID, jobID, stem)
 
+	outputInfo, err := os.Stat(outputPath)
+	if err != nil {
+		w.failJob(ctx, jobID, fmt.Sprintf("stat output: %v", err))
+		return
+	}
+	outputSize := outputInfo.Size()
+
 	if err := w.storage.Upload(ctx, outputPath, outputKey); err != nil {
 		w.failJob(ctx, jobID, fmt.Sprintf("upload result: %v", err))
 		return
 	}
 
-	if err := w.repo.SetCompleted(ctx, jobID, outputKey); err != nil {
+	if err := w.repo.SetCompleted(ctx, jobID, outputKey, outputSize); err != nil {
 		log.Printf("[worker %d] job %s: failed to mark completed: %v", workerID, jobID, err)
 		return
 	}

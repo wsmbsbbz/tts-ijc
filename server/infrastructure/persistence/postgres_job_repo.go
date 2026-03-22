@@ -72,7 +72,8 @@ func migratePostgresTable(db *sql.DB) error {
 	for _, stmt := range []string{
 		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_name TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS vtt_name   TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS user_id    TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS user_id     TEXT   NOT NULL DEFAULT ''",
+		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS output_size BIGINT NOT NULL DEFAULT 0",
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "already exists") {
 			return fmt.Errorf("migrate: %w", err)
@@ -113,7 +114,7 @@ func (r *PostgresJobRepo) FindByID(ctx context.Context, id string) (domain.Job, 
 		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
-		       created_at, completed_at, error
+		       output_size, created_at, completed_at, error
 		FROM jobs WHERE id = $1
 	`, id)
 	return scanPgJob(row)
@@ -124,7 +125,7 @@ func (r *PostgresJobRepo) ListRecent(ctx context.Context, userID string, limit i
 		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
-		       created_at, completed_at, error
+		       output_size, created_at, completed_at, error
 		FROM jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2
 	`, userID, limit)
 	if err != nil {
@@ -150,10 +151,10 @@ func (r *PostgresJobRepo) UpdateStatus(ctx context.Context, id string, status do
 	return checkAffected(res, err, id)
 }
 
-func (r *PostgresJobRepo) SetCompleted(ctx context.Context, id, outputKey string) error {
+func (r *PostgresJobRepo) SetCompleted(ctx context.Context, id, outputKey string, outputSize int64) error {
 	res, err := r.db.ExecContext(ctx, `
-		UPDATE jobs SET status = $1, output_key = $2, completed_at = $3 WHERE id = $4
-	`, string(domain.StatusCompleted), outputKey, time.Now(), id)
+		UPDATE jobs SET status = $1, output_key = $2, output_size = $3, completed_at = $4 WHERE id = $5
+	`, string(domain.StatusCompleted), outputKey, outputSize, time.Now(), id)
 	return checkAffected(res, err, id)
 }
 
@@ -171,7 +172,7 @@ func (r *PostgresJobRepo) DeleteExpired(ctx context.Context, ttl time.Duration) 
 		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
-		       created_at, completed_at, error
+		       output_size, created_at, completed_at, error
 		FROM jobs WHERE created_at < $1 AND status IN ($2, $3)
 	`, cutoff, string(domain.StatusCompleted), string(domain.StatusFailed))
 	if err != nil {
@@ -219,7 +220,7 @@ func scanPgJob(s scanner) (domain.Job, error) {
 		&j.AudioName, &j.VTTName,
 		&j.Config.TTSProvider, &j.Config.TTSVolume,
 		&j.Config.NoSpeedup, &j.Config.Concurrency,
-		&j.CreatedAt, &completedAt, &errMsg,
+		&j.OutputSize, &j.CreatedAt, &completedAt, &errMsg,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {

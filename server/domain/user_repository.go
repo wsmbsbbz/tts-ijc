@@ -11,6 +11,10 @@ type UserRepository interface {
 	// DeactivateExpired marks expired accounts as inactive and returns their IDs
 	// so the caller can cascade-delete their sessions.
 	DeactivateExpired(ctx context.Context) ([]string, error)
+	// IncrementUploadBytes atomically adds n bytes to the user's upload counter.
+	IncrementUploadBytes(ctx context.Context, userID string, n int64) error
+	// IncrementDownloadBytes atomically adds n bytes to the user's download counter.
+	IncrementDownloadBytes(ctx context.Context, userID string, n int64) error
 }
 
 // SessionRepository defines persistence operations for Session entities.

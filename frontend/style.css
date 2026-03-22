@@ -885,6 +885,55 @@ body {
   justify-content: center;
 }
 
+/* Quota */
+.quota-display {
+  display: flex;
+  gap: 14px;
+}
+
+.quota-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quota-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.quota-val {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.quota-bar {
+  width: 56px;
+  height: 4px;
+  background: var(--surface-3);
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+
+.quota-bar::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: var(--pct);
+  background: linear-gradient(90deg, var(--teal), var(--violet));
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.quota-bar-warn::after {
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
+}
+
 /* Header right side */
 .header-right {
   display: flex;

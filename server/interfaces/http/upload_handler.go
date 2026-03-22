@@ -2,9 +2,11 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/wsmbsbbz/tts-ijc/server/application"
+	"github.com/wsmbsbbz/tts-ijc/server/domain"
 )
 
 // allowedContentTypes is the whitelist for presigned upload URLs.
@@ -47,6 +49,10 @@ func (h *UploadHandler) HandleRequestURL(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "filename and content_type are required")
 		return
 	}
+	if req.FileSize <= 0 {
+		writeError(w, http.StatusBadRequest, "file_size must be a positive integer")
+		return
+	}
 
 	if !allowedContentTypes[req.ContentType] {
 		writeError(w, http.StatusUnsupportedMediaType, "unsupported content type")
@@ -54,8 +60,12 @@ func (h *UploadHandler) HandleRequestURL(w http.ResponseWriter, r *http.Request)
 	}
 
 	user, _ := UserFromContext(r.Context())
-	result, err := h.svc.RequestUploadURL(r.Context(), user.ID, req.Filename, req.ContentType)
+	result, err := h.svc.RequestUploadURL(r.Context(), user.ID, req.Filename, req.ContentType, req.FileSize)
 	if err != nil {
+		if errors.Is(err, domain.ErrUploadQuotaExceeded) {
+			writeError(w, http.StatusForbidden, "upload quota exceeded")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to generate upload URL")
 		return
 	}

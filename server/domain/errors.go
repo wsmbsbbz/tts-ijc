@@ -12,4 +12,7 @@ var (
 	ErrSessionNotFound      = errors.New("session not found")
 	ErrAccountExpired       = errors.New("account has expired")
 	ErrRegisterLimitReached = errors.New("registration limit reached, please try again later")
+
+	ErrUploadQuotaExceeded   = errors.New("upload quota exceeded")
+	ErrDownloadQuotaExceeded = errors.New("download quota exceeded")
 )

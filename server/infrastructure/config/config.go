@@ -31,6 +31,10 @@ type Config struct {
 
 	// AllowedTTSProviders is the comma-separated list of enabled TTS engines.
 	AllowedTTSProviders string
+
+	// Per-user lifetime quotas (bytes).
+	UserUploadLimitBytes   int64
+	UserDownloadLimitBytes int64
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -54,7 +58,9 @@ func Load() Config {
 		MaxActiveAccounts:   envInt("MAX_ACTIVE_ACCOUNTS", 100),
 		AccountTTLHours:     envInt("ACCOUNT_TTL_HOURS", 24),
 		SessionTTLHours:     envInt("SESSION_TTL_HOURS", 24),
-		AllowedTTSProviders: envStr("ALLOWED_TTS_PROVIDERS", "edge"),
+		AllowedTTSProviders:    envStr("ALLOWED_TTS_PROVIDERS", "edge"),
+		UserUploadLimitBytes:   envInt64("USER_UPLOAD_LIMIT_BYTES", 1<<30),  // 1 GB
+		UserDownloadLimitBytes: envInt64("USER_DOWNLOAD_LIMIT_BYTES", 3<<30), // 3 GB
 	}
 }
 
@@ -68,6 +74,15 @@ func envStr(key, fallback string) string {
 func envInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func envInt64(key string, fallback int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}
 	}

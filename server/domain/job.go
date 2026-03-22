@@ -32,6 +32,7 @@ type Job struct {
 	AudioName   string
 	VTTName     string
 	Config      JobConfig
+	OutputSize  int64
 	CreatedAt   time.Time
 	CompletedAt *time.Time
 	Error       *string

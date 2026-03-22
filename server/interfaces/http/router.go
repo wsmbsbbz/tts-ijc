@@ -21,6 +21,7 @@ func NewRouter(
 	mux.HandleFunc("/api/auth/login", authHandler.HandleLogin)
 	mux.HandleFunc("/api/auth/logout", authHandler.HandleLogout)
 	mux.HandleFunc("/api/tts-providers", jobHandler.HandleListProviders)
+	mux.Handle("/api/me", sessionAuth(http.HandlerFunc(authHandler.HandleMe)))
 
 	// Protected API routes — wrapped individually with sessionAuth.
 	mux.Handle("/api/upload-url", sessionAuth(http.HandlerFunc(uploadHandler.HandleRequestURL)))

@@ -31,12 +31,14 @@ func NewPostgresUserRepos(db *sql.DB) (*PostgresUserRepo, *PostgresSessionRepo, 
 func createPostgresUserTables(db *sql.DB) error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
-			id            TEXT PRIMARY KEY,
-			username      TEXT UNIQUE NOT NULL,
-			password_hash TEXT NOT NULL,
-			created_at    TIMESTAMPTZ NOT NULL,
-			expires_at    TIMESTAMPTZ NOT NULL,
-			is_active     BOOLEAN NOT NULL DEFAULT TRUE
+			id                     TEXT PRIMARY KEY,
+			username               TEXT UNIQUE NOT NULL,
+			password_hash          TEXT NOT NULL,
+			created_at             TIMESTAMPTZ NOT NULL,
+			expires_at             TIMESTAMPTZ NOT NULL,
+			is_active              BOOLEAN NOT NULL DEFAULT TRUE,
+			total_bytes_uploaded   BIGINT NOT NULL DEFAULT 0,
+			total_bytes_downloaded BIGINT NOT NULL DEFAULT 0
 		);
 		CREATE TABLE IF NOT EXISTS sessions (
 			token      TEXT PRIMARY KEY,
@@ -55,9 +57,11 @@ func createPostgresUserTables(db *sql.DB) error {
 
 func (r *PostgresUserRepo) Save(ctx context.Context, u domain.User) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO users (id, username, password_hash, created_at, expires_at, is_active)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, u.ID, u.Username, u.PasswordHash, u.CreatedAt, u.ExpiresAt, u.IsActive)
+		INSERT INTO users (id, username, password_hash, created_at, expires_at, is_active,
+		                   total_bytes_uploaded, total_bytes_downloaded)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, u.ID, u.Username, u.PasswordHash, u.CreatedAt, u.ExpiresAt, u.IsActive,
+		u.TotalBytesUploaded, u.TotalBytesDownloaded)
 	if err != nil {
 		return fmt.Errorf("insert user: %w", err)
 	}
@@ -66,7 +70,8 @@ func (r *PostgresUserRepo) Save(ctx context.Context, u domain.User) error {
 
 func (r *PostgresUserRepo) FindByUsername(ctx context.Context, username string) (domain.User, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, created_at, expires_at, is_active
+		SELECT id, username, password_hash, created_at, expires_at, is_active,
+		       total_bytes_uploaded, total_bytes_downloaded
 		FROM users WHERE username = $1
 	`, username)
 	return scanPgUser(row)
@@ -74,7 +79,8 @@ func (r *PostgresUserRepo) FindByUsername(ctx context.Context, username string) 
 
 func (r *PostgresUserRepo) FindByID(ctx context.Context, id string) (domain.User, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, created_at, expires_at, is_active
+		SELECT id, username, password_hash, created_at, expires_at, is_active,
+		       total_bytes_uploaded, total_bytes_downloaded
 		FROM users WHERE id = $1
 	`, id)
 	return scanPgUser(row)
@@ -114,7 +120,8 @@ func (r *PostgresUserRepo) DeactivateExpired(ctx context.Context) ([]string, err
 
 func scanPgUser(s scanner) (domain.User, error) {
 	var u domain.User
-	err := s.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt, &u.ExpiresAt, &u.IsActive)
+	err := s.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt, &u.ExpiresAt, &u.IsActive,
+		&u.TotalBytesUploaded, &u.TotalBytesDownloaded)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return domain.User{}, domain.ErrUserNotFound
@@ -122,6 +129,18 @@ func scanPgUser(s scanner) (domain.User, error) {
 		return domain.User{}, fmt.Errorf("scan user: %w", err)
 	}
 	return u, nil
+}
+
+func (r *PostgresUserRepo) IncrementUploadBytes(ctx context.Context, userID string, n int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE users SET total_bytes_uploaded = total_bytes_uploaded + $1 WHERE id = $2`, n, userID)
+	return err
+}
+
+func (r *PostgresUserRepo) IncrementDownloadBytes(ctx context.Context, userID string, n int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE users SET total_bytes_downloaded = total_bytes_downloaded + $1 WHERE id = $2`, n, userID)
+	return err
 }
 
 // --- SessionRepository ---

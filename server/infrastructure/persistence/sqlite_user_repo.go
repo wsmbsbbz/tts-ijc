@@ -30,12 +30,14 @@ func NewSQLiteUserRepos(db *sql.DB) (*SQLiteUserRepo, *SQLiteSessionRepo, error)
 func createSQLiteUserTables(db *sql.DB) error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
-			id            TEXT PRIMARY KEY,
-			username      TEXT UNIQUE NOT NULL,
-			password_hash TEXT NOT NULL,
-			created_at    TEXT NOT NULL,
-			expires_at    TEXT NOT NULL,
-			is_active     INTEGER NOT NULL DEFAULT 1
+			id                     TEXT PRIMARY KEY,
+			username               TEXT UNIQUE NOT NULL,
+			password_hash          TEXT NOT NULL,
+			created_at             TEXT NOT NULL,
+			expires_at             TEXT NOT NULL,
+			is_active              INTEGER NOT NULL DEFAULT 1,
+			total_bytes_uploaded   INTEGER NOT NULL DEFAULT 0,
+			total_bytes_downloaded INTEGER NOT NULL DEFAULT 0
 		);
 		CREATE TABLE IF NOT EXISTS sessions (
 			token      TEXT PRIMARY KEY,
@@ -54,12 +56,14 @@ func createSQLiteUserTables(db *sql.DB) error {
 
 func (r *SQLiteUserRepo) Save(ctx context.Context, u domain.User) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO users (id, username, password_hash, created_at, expires_at, is_active)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO users (id, username, password_hash, created_at, expires_at, is_active,
+		                   total_bytes_uploaded, total_bytes_downloaded)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`, u.ID, u.Username, u.PasswordHash,
 		u.CreatedAt.Format(time.RFC3339),
 		u.ExpiresAt.Format(time.RFC3339),
 		boolToInt(u.IsActive),
+		u.TotalBytesUploaded, u.TotalBytesDownloaded,
 	)
 	if err != nil {
 		return fmt.Errorf("insert user: %w", err)
@@ -69,7 +73,8 @@ func (r *SQLiteUserRepo) Save(ctx context.Context, u domain.User) error {
 
 func (r *SQLiteUserRepo) FindByUsername(ctx context.Context, username string) (domain.User, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, created_at, expires_at, is_active
+		SELECT id, username, password_hash, created_at, expires_at, is_active,
+		       total_bytes_uploaded, total_bytes_downloaded
 		FROM users WHERE username = ?
 	`, username)
 	return scanSQLiteUser(row)
@@ -77,7 +82,8 @@ func (r *SQLiteUserRepo) FindByUsername(ctx context.Context, username string) (d
 
 func (r *SQLiteUserRepo) FindByID(ctx context.Context, id string) (domain.User, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, username, password_hash, created_at, expires_at, is_active
+		SELECT id, username, password_hash, created_at, expires_at, is_active,
+		       total_bytes_uploaded, total_bytes_downloaded
 		FROM users WHERE id = ?
 	`, id)
 	return scanSQLiteUser(row)
@@ -133,7 +139,8 @@ func scanSQLiteUser(s scanner) (domain.User, error) {
 		expiresAt string
 		isActive  int
 	)
-	err := s.Scan(&u.ID, &u.Username, &u.PasswordHash, &createdAt, &expiresAt, &isActive)
+	err := s.Scan(&u.ID, &u.Username, &u.PasswordHash, &createdAt, &expiresAt, &isActive,
+		&u.TotalBytesUploaded, &u.TotalBytesDownloaded)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return domain.User{}, domain.ErrUserNotFound
@@ -144,6 +151,18 @@ func scanSQLiteUser(s scanner) (domain.User, error) {
 	u.ExpiresAt, _ = time.Parse(time.RFC3339, expiresAt)
 	u.IsActive = isActive != 0
 	return u, nil
+}
+
+func (r *SQLiteUserRepo) IncrementUploadBytes(ctx context.Context, userID string, n int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE users SET total_bytes_uploaded = total_bytes_uploaded + ? WHERE id = ?`, n, userID)
+	return err
+}
+
+func (r *SQLiteUserRepo) IncrementDownloadBytes(ctx context.Context, userID string, n int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE users SET total_bytes_downloaded = total_bytes_downloaded + ? WHERE id = ?`, n, userID)
+	return err
 }
 
 // --- SessionRepository ---

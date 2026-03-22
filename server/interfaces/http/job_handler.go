@@ -16,15 +16,17 @@ const downloadURLExpiry = 5 * time.Minute
 
 // JobHandler handles job-related HTTP requests.
 type JobHandler struct {
-	jobSvc           *application.JobService
-	storage          domain.FileStorage
-	allowedProviders map[string]bool
-	providerList     []string
+	jobSvc             *application.JobService
+	storage            domain.FileStorage
+	userRepo           domain.UserRepository
+	allowedProviders   map[string]bool
+	providerList       []string
+	downloadLimitBytes int64
 }
 
 // NewJobHandler creates a JobHandler.
 // allowedProviders is the comma-separated value from config (e.g. "edge,gtts").
-func NewJobHandler(jobSvc *application.JobService, storage domain.FileStorage, allowedProviders string) *JobHandler {
+func NewJobHandler(jobSvc *application.JobService, storage domain.FileStorage, userRepo domain.UserRepository, allowedProviders string, downloadLimit int64) *JobHandler {
 	list := strings.Split(allowedProviders, ",")
 	set := make(map[string]bool, len(list))
 	for _, p := range list {
@@ -34,10 +36,12 @@ func NewJobHandler(jobSvc *application.JobService, storage domain.FileStorage, a
 		}
 	}
 	return &JobHandler{
-		jobSvc:           jobSvc,
-		storage:          storage,
-		allowedProviders: set,
-		providerList:     list,
+		jobSvc:             jobSvc,
+		storage:            storage,
+		userRepo:           userRepo,
+		allowedProviders:   set,
+		providerList:       list,
+		downloadLimitBytes: downloadLimit,
 	}
 }
 
@@ -177,6 +181,16 @@ func (h *JobHandler) HandleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check download quota before generating URL.
+	if job.OutputSize > 0 {
+		user, _ := UserFromContext(r.Context())
+		freshUser, err := h.userRepo.FindByID(r.Context(), user.ID)
+		if err == nil && freshUser.TotalBytesDownloaded+job.OutputSize > h.downloadLimitBytes {
+			writeError(w, http.StatusForbidden, "download quota exceeded")
+			return
+		}
+	}
+
 	stem := strings.TrimSuffix(job.AudioName, path.Ext(job.AudioName))
 	if stem == "" {
 		stem = "output"
@@ -185,6 +199,12 @@ func (h *JobHandler) HandleDownload(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to generate download URL")
 		return
+	}
+
+	// Increment download counter after URL is generated.
+	if job.OutputSize > 0 {
+		dlUser, _ := UserFromContext(r.Context())
+		_ = h.userRepo.IncrementDownloadBytes(r.Context(), dlUser.ID, job.OutputSize)
 	}
 
 	http.Redirect(w, r, downloadURL, http.StatusFound)

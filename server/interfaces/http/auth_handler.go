@@ -10,14 +10,37 @@ import (
 	"github.com/wsmbsbbz/tts-ijc/server/domain"
 )
 
-// AuthHandler handles registration, login, and logout.
+// AuthHandler handles registration, login, logout, and user profile.
 type AuthHandler struct {
-	authSvc *application.AuthService
+	authSvc              *application.AuthService
+	uploadLimitBytes     int64
+	downloadLimitBytes   int64
 }
 
 // NewAuthHandler creates an AuthHandler.
-func NewAuthHandler(authSvc *application.AuthService) *AuthHandler {
-	return &AuthHandler{authSvc: authSvc}
+func NewAuthHandler(authSvc *application.AuthService, uploadLimit, downloadLimit int64) *AuthHandler {
+	return &AuthHandler{
+		authSvc:            authSvc,
+		uploadLimitBytes:   uploadLimit,
+		downloadLimitBytes: downloadLimit,
+	}
+}
+
+// HandleMe handles GET /api/me.
+func (h *AuthHandler) HandleMe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, _ := UserFromContext(r.Context())
+	writeJSON(w, http.StatusOK, MeResponse{
+		Username:             user.Username,
+		ExpiresAt:            user.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+		TotalBytesUploaded:   user.TotalBytesUploaded,
+		UploadLimitBytes:     h.uploadLimitBytes,
+		TotalBytesDownloaded: user.TotalBytesDownloaded,
+		DownloadLimitBytes:   h.downloadLimitBytes,
+	})
 }
 
 // HandleRegister handles POST /api/auth/register.

@@ -165,6 +165,7 @@ function showApp() {
   recentSection.hidden = false;
   userInfo.hidden = false;
   loadRecentJobs();
+  loadMe();
 }
 
 function switchTab(tab) {
@@ -366,6 +367,7 @@ async function uploadFile(file, progressEl) {
     body: JSON.stringify({
       filename: file.name,
       content_type: file.type || 'application/octet-stream',
+      file_size: file.size,
     }),
   });
   if (!res.ok) {
@@ -496,6 +498,7 @@ function startPolling(jobId) {
       if (job.status === 'completed' || job.status === 'failed') {
         stopPolling();
         loadRecentJobs();
+        loadMe();
       }
     } catch { /* ignore transient polling errors */ }
   }, 3000);
@@ -503,6 +506,44 @@ function startPolling(jobId) {
 
 function stopPolling() {
   if (pollingTimer) { clearInterval(pollingTimer); pollingTimer = null; }
+}
+
+// ── User / Quota ──────────────────────────────────────────────────────────────
+async function loadMe() {
+  try {
+    const res = await fetch(`${API}/api/me`, { headers: authHeaders() });
+    if (!res.ok) return;
+    const me = await res.json();
+    usernameDisplay.textContent = me.username;
+    renderQuota(me);
+  } catch { /* ignore */ }
+}
+
+function renderQuota(me) {
+  const el = $('quota-display');
+  if (!el) return;
+  const fmt = bytes => {
+    if (bytes >= 1 << 30) return (bytes / (1 << 30)).toFixed(1) + ' GB';
+    if (bytes >= 1 << 20) return (bytes / (1 << 20)).toFixed(0) + ' MB';
+    return (bytes / (1 << 10)).toFixed(0) + ' KB';
+  };
+  const bar = (used, limit) => {
+    const pct = Math.min(100, Math.round(used / limit * 100));
+    const warn = pct >= 90 ? 'quota-bar-warn' : '';
+    return `<div class="quota-bar ${warn}" style="--pct:${pct}%"></div>`;
+  };
+  el.innerHTML = `
+    <div class="quota-item">
+      <span class="quota-label">上传</span>
+      ${bar(me.total_bytes_uploaded, me.upload_limit_bytes)}
+      <span class="quota-val">${fmt(me.total_bytes_uploaded)} / ${fmt(me.upload_limit_bytes)}</span>
+    </div>
+    <div class="quota-item">
+      <span class="quota-label">下载</span>
+      ${bar(me.total_bytes_downloaded, me.download_limit_bytes)}
+      <span class="quota-val">${fmt(me.total_bytes_downloaded)} / ${fmt(me.download_limit_bytes)}</span>
+    </div>
+  `;
 }
 
 // ── Recent Jobs ───────────────────────────────────────────────────────────────
