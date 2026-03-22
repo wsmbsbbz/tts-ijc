@@ -22,10 +22,13 @@ COPY cli/ /opt/tc/
 
 COPY --from=go-builder /app /usr/local/bin/server
 
+COPY frontend/ /opt/frontend/
+
 RUN mkdir -p /data
 ENV DB_PATH=/data/jobs.db
 ENV PYTHON_BIN=python3
 ENV PYTHON_DIR=/opt/tc
+ENV FRONTEND_DIR=/opt/frontend
 ENV PORT=8080
 
 EXPOSE 8080

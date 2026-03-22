@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 )
 
 // NewRouter creates the HTTP mux with all API routes registered.
@@ -22,6 +23,11 @@ func NewRouter(jobHandler *JobHandler, uploadHandler *UploadHandler, opts ...fun
 		}
 	})
 	mux.HandleFunc("/api/jobs/", jobHandler.HandleGet)
+
+	// Static frontend (served when FRONTEND_DIR is set)
+	if dir := os.Getenv("FRONTEND_DIR"); dir != "" {
+		mux.Handle("/", http.FileServer(http.Dir(dir)))
+	}
 
 	// Apply middleware stack: CORS → Logging → Recovery → (optional) → mux
 	var handler http.Handler = mux
