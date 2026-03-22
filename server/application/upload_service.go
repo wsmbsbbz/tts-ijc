@@ -29,9 +29,11 @@ type UploadURLResult struct {
 }
 
 // RequestUploadURL generates a presigned PUT URL for direct browser-to-R2 upload.
-func (s *UploadService) RequestUploadURL(ctx context.Context, filename, contentType string) (UploadURLResult, error) {
+// Files are stored under uploads/{userID}/{uuid}/{filename} so they can be
+// batch-deleted by user prefix when an account is cleaned up.
+func (s *UploadService) RequestUploadURL(ctx context.Context, userID, filename, contentType string) (UploadURLResult, error) {
 	id := s.idFunc()
-	key := path.Join("uploads", id, filename)
+	key := path.Join("uploads", userID, id, filename)
 
 	url, err := s.storage.GenerateUploadURL(ctx, key, contentType, uploadURLExpiry)
 	if err != nil {

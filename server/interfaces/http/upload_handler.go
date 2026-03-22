@@ -53,7 +53,8 @@ func (h *UploadHandler) HandleRequestURL(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	result, err := h.svc.RequestUploadURL(r.Context(), req.Filename, req.ContentType)
+	user, _ := UserFromContext(r.Context())
+	result, err := h.svc.RequestUploadURL(r.Context(), user.ID, req.Filename, req.ContentType)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to generate upload URL")
 		return
