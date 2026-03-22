@@ -290,6 +290,9 @@ function renderJobList(jobs) {
       <div class="job-item-id">${j.job_id}</div>
       <div class="job-badge ${j.status}">${j.status}</div>
       <div class="job-time">${fmtTime(j.created_at)}</div>
+      ${j.status === 'completed' && j.download_url
+        ? `<a class="job-download-link" href="${j.download_url}" target="_blank" rel="noopener">下载</a>`
+        : ''}
     </div>
   `).join('');
 }
