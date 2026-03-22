@@ -47,7 +47,7 @@ func NewJob(id, userID, audioKey, vttKey, audioName, vttName string, cfg JobConf
 		cfg.TTSVolume = 0.08
 	}
 	if cfg.Concurrency <= 0 {
-		cfg.Concurrency = 5
+		cfg.Concurrency = 3
 	}
 
 	return Job{

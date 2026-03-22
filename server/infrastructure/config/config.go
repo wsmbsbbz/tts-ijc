@@ -46,7 +46,7 @@ func Load() Config {
 		PythonDir:  envStr("PYTHON_DIR", "/opt/tc"),
 		MaxWorkers: envInt("MAX_WORKERS", 2),
 		JobTTLHours: envInt("JOB_TTL_HOURS", 24),
-		QueueSize:  envInt("QUEUE_SIZE", 50),
+		QueueSize:  envInt("QUEUE_SIZE", 20),
 
 		R2Endpoint:        envStr("R2_ENDPOINT", ""),
 		R2AccessKeyID:     envStr("R2_ACCESS_KEY_ID", ""),
