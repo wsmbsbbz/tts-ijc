@@ -27,9 +27,9 @@ func NewJobService(repo domain.JobRepository, queue chan<- string, idFunc func()
 }
 
 // CreateJob validates config, persists a new job, and enqueues it for processing.
-func (s *JobService) CreateJob(ctx context.Context, audioKey, vttKey, audioName, vttName string, cfg domain.JobConfig) (domain.Job, error) {
+func (s *JobService) CreateJob(ctx context.Context, userID, audioKey, vttKey, audioName, vttName string, cfg domain.JobConfig) (domain.Job, error) {
 	id := s.idFunc()
-	job := domain.NewJob(id, audioKey, vttKey, audioName, vttName, cfg)
+	job := domain.NewJob(id, userID, audioKey, vttKey, audioName, vttName, cfg)
 
 	if err := s.repo.Save(ctx, job); err != nil {
 		return domain.Job{}, fmt.Errorf("save job: %w", err)
@@ -50,10 +50,10 @@ func (s *JobService) GetJob(ctx context.Context, id string) (domain.Job, error) 
 	return s.repo.FindByID(ctx, id)
 }
 
-// ListJobs returns the most recent jobs.
-func (s *JobService) ListJobs(ctx context.Context, limit int) ([]domain.Job, error) {
+// ListJobs returns the most recent jobs belonging to the given user.
+func (s *JobService) ListJobs(ctx context.Context, userID string, limit int) ([]domain.Job, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	return s.repo.ListRecent(ctx, limit)
+	return s.repo.ListRecent(ctx, userID, limit)
 }

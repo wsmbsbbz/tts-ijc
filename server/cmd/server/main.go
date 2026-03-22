@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -20,6 +21,9 @@ import (
 	"github.com/wsmbsbbz/tts-ijc/server/infrastructure/storage"
 	"github.com/wsmbsbbz/tts-ijc/server/infrastructure/translator"
 	httpintf "github.com/wsmbsbbz/tts-ijc/server/interfaces/http"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "modernc.org/sqlite"
 )
 
 func main() {
@@ -27,7 +31,8 @@ func main() {
 
 	// --- Persistence ---
 
-	repo := initRepo(cfg)
+	jobRepo, userRepo, sessionRepo, closeDB := initRepos(cfg)
+	defer closeDB()
 
 	// --- Infrastructure ---
 
@@ -45,9 +50,13 @@ func main() {
 	idFunc := func() string { return uuid.New().String() }
 	queue := make(chan string, cfg.QueueSize)
 
-	jobSvc := application.NewJobService(repo, queue, idFunc)
+	accountTTL := time.Duration(cfg.AccountTTLHours) * time.Hour
+	sessionTTL := time.Duration(cfg.SessionTTLHours) * time.Hour
+
+	jobSvc := application.NewJobService(jobRepo, queue, idFunc)
 	uploadSvc := application.NewUploadService(r2, idFunc)
-	workerSvc := application.NewWorkerService(repo, r2, trans, queue)
+	workerSvc := application.NewWorkerService(jobRepo, r2, trans, queue)
+	authSvc := application.NewAuthService(userRepo, sessionRepo, idFunc, accountTTL, sessionTTL, cfg.MaxActiveAccounts)
 
 	// --- Start workers ---
 
@@ -57,14 +66,36 @@ func main() {
 	workerSvc.Start(ctx, cfg.MaxWorkers)
 	workerSvc.StartCleanupLoop(ctx, 1*time.Hour, time.Duration(cfg.JobTTLHours)*time.Hour)
 
+	// Periodically expire accounts and their sessions.
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := authSvc.ExpireAccounts(ctx); err != nil {
+					log.Printf("expire accounts: %v", err)
+				}
+			}
+		}
+	}()
+
 	log.Printf("started %d workers, queue capacity %d", cfg.MaxWorkers, cfg.QueueSize)
 
 	// --- HTTP ---
 
 	jobHandler := httpintf.NewJobHandler(jobSvc, r2)
 	uploadHandler := httpintf.NewUploadHandler(uploadSvc)
+	authHandler := httpintf.NewAuthHandler(authSvc)
+	sessionAuth := httpintf.SessionAuth(authSvc)
 
-	router := httpintf.NewRouter(jobHandler, uploadHandler,
+	router := httpintf.NewRouter(
+		jobHandler,
+		uploadHandler,
+		authHandler,
+		sessionAuth,
 		httpintf.BasicAuth(cfg.AuthUser, cfg.AuthPass),
 	)
 
@@ -103,25 +134,70 @@ type repoCloser interface {
 	Close() error
 }
 
-// initRepo selects the persistence backend based on config.
-// When DATABASE_URL is set, uses PostgreSQL; otherwise falls back to SQLite.
-func initRepo(cfg config.Config) repoCloser {
+// initRepos selects the persistence backend based on config.
+// Returns job, user, and session repos plus a close function.
+func initRepos(cfg config.Config) (domain.JobRepository, domain.UserRepository, domain.SessionRepository, func()) {
 	if cfg.DatabaseURL != "" {
-		repo, err := persistence.NewPostgresJobRepo(cfg.DatabaseURL)
+		db, err := sql.Open("pgx", cfg.DatabaseURL)
 		if err != nil {
-			log.Fatalf("init postgres: %v", err)
+			log.Fatalf("open postgres: %v", err)
 		}
+		if err := db.Ping(); err != nil {
+			log.Fatalf("ping postgres: %v", err)
+		}
+
+		jobRepo, err := persistence.NewPostgresJobRepo(cfg.DatabaseURL)
+		if err != nil {
+			log.Fatalf("init postgres job repo: %v", err)
+		}
+
+		userRepo, sessionRepo, err := persistence.NewPostgresUserRepos(db)
+		if err != nil {
+			log.Fatalf("init postgres user repos: %v", err)
+		}
+
 		log.Println("persistence: postgres")
-		return repo
+		return jobRepo, userRepo, sessionRepo, func() {
+			jobRepo.Close()
+			db.Close()
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o755); err != nil {
 		log.Fatalf("create db directory: %v", err)
 	}
-	repo, err := persistence.NewSQLiteJobRepo(cfg.DBPath)
+
+	jobRepo, err := persistence.NewSQLiteJobRepo(cfg.DBPath)
 	if err != nil {
-		log.Fatalf("init sqlite: %v", err)
+		log.Fatalf("init sqlite job repo: %v", err)
 	}
+
+	// Share the same SQLite file for user/session tables.
+	db, err := openSQLiteDB(cfg.DBPath)
+	if err != nil {
+		log.Fatalf("open sqlite for user repos: %v", err)
+	}
+
+	userRepo, sessionRepo, err := persistence.NewSQLiteUserRepos(db)
+	if err != nil {
+		log.Fatalf("init sqlite user repos: %v", err)
+	}
+
 	log.Printf("persistence: sqlite (%s)", cfg.DBPath)
-	return repo
+	return jobRepo, userRepo, sessionRepo, func() {
+		jobRepo.Close()
+		db.Close()
+	}
+}
+
+func openSQLiteDB(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set WAL mode: %w", err)
+	}
+	return db, nil
 }

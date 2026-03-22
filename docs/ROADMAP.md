@@ -1,6 +1,6 @@
 # Roadmap
 
-## Phase 1 — 文件名体验优化
+## Phase 1 — 文件名体验优化 ✅
 
 **目标**：前端上传、任务列表、下载按钮均使用原始文件名，避免显示 UUID 路径。
 
@@ -25,33 +25,43 @@
 
 ---
 
-## Phase 2 — 邮箱注册 / 登录
+## Phase 2 — 用户名 / 密码注册登录 ✅
 
-**目标**：引入用户体系，支持邮箱 + 密码注册登录，为后续限流和个人任务历史奠定基础。
+**目标**：引入用户体系，支持用户名 + 密码注册登录，账号有有效期管控，为后续限流和个人任务历史奠定基础。
+
+### 设计决策
+
+- 认证方式：**Opaque Session Token**（有状态，存库）。相比 JWT 更易在账号到期时立即失效。
+- 账号有效期：可配置（默认 24 小时），到期后自动停用并踢出会话，但数据保留。
+- 最大有效账号数：可配置（默认 100），注册时实时检查。
 
 ### 涉及改动
 
 **后端**
 
-- `domain/user.go`：`User` 实体（id、email、password_hash、created_at、daily_job_count、daily_bytes_used）
-- `infrastructure/persistence`：`users` 表（Postgres 优先；SQLite 保持兼容）
-- `application/auth_service.go`：注册（bcrypt hash）、登录（JWT 签发）、token 校验
-- `interfaces/http/auth_handler.go`：`POST /api/auth/register`、`POST /api/auth/login`
-- `interfaces/http/middleware.go`：JWT 认证中间件，挂载到 `/api/jobs`、`/api/upload-url`
-- `infrastructure/config/config.go`：增加 `JWT_SECRET`、`JWT_TTL_HOURS` 环境变量
+- `domain/user.go`：`User` 实体（id、username、password_hash、created_at、expires_at、is_active）；`Session` 实体（token、user_id、expires_at）
+- `domain/user_repository.go`：`UserRepository` + `SessionRepository` 接口
+- `infrastructure/persistence`：`users`、`sessions` 表（Postgres + SQLite 双实现）
+- `application/auth_service.go`：注册（bcrypt hash）、登录、注销、session 校验、账号定期过期
+- `interfaces/http/auth_handler.go`：`POST /api/auth/register`、`POST /api/auth/login`、`POST /api/auth/logout`
+- `interfaces/http/middleware.go`：`SessionAuth` 中间件，挂载到 `/api/jobs`、`/api/upload-url`；支持 `?token=` 参数用于下载链接
+- `domain/job.go`：`Job` 增加 `UserID` 字段；`ListRecent` 按 user 过滤
+- `infrastructure/config/config.go`：增加 `MAX_ACTIVE_ACCOUNTS`、`ACCOUNT_TTL_HOURS`、`SESSION_TTL_HOURS`
 
 **前端**
 
-- 新增登录 / 注册页（或模态框）
+- 新增登录 / 注册卡片（Tab 切换）
 - 登录后 token 存 `localStorage`，请求时带 `Authorization: Bearer <token>`
-- 未登录时跳转到登录页
+- 未登录时显示 Auth 页，隐藏主界面；401 时自动退出
+- 下载链接附带 `?token=` 参数
 
 **新增环境变量**
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `JWT_SECRET` | JWT 签名密钥（必填） | — |
-| `JWT_TTL_HOURS` | Token 有效期（小时） | `72` |
+| `MAX_ACTIVE_ACCOUNTS` | 同时有效账号上限 | `100` |
+| `ACCOUNT_TTL_HOURS` | 账号有效期（小时） | `24` |
+| `SESSION_TTL_HOURS` | Session 有效期（小时） | `24` |
 
 ---
 

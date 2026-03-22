@@ -2,10 +2,35 @@
 // API base: set via window.API_BASE (e.g. in index.html or config.local.js)
 
 const API = (window.API_BASE || '').replace(/\/+$/, '');
+const TOKEN_KEY = 'tc_token';
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 
+// Auth
+const authSection   = $('auth-section');
+const appMain       = $('app-main');
+const recentSection = $('recent-section');
+const userInfo      = $('user-info');
+const usernameDisplay = $('username-display');
+const logoutBtn     = $('logout-btn');
+
+const tabLogin    = $('tab-login');
+const tabRegister = $('tab-register');
+const formLogin   = $('form-login');
+const formRegister = $('form-register');
+
+const loginUsername  = $('login-username');
+const loginPassword  = $('login-password');
+const loginError     = $('login-error');
+const loginBtn       = $('login-btn');
+
+const regUsername = $('reg-username');
+const regPassword = $('reg-password');
+const regError    = $('reg-error');
+const registerBtn = $('register-btn');
+
+// App
 const uploadSection = $('upload-section');
 const jobSection    = $('job-section');
 
@@ -51,8 +76,167 @@ ttsVolume.addEventListener('input', () => {
 submitBtn.addEventListener('click', handleSubmit);
 newJobBtn.addEventListener('click', resetToUpload);
 refreshBtn.addEventListener('click', loadRecentJobs);
+logoutBtn.addEventListener('click', handleLogout);
 
-loadRecentJobs();
+// Auth tab switching
+tabLogin.addEventListener('click', () => switchTab('login'));
+tabRegister.addEventListener('click', () => switchTab('register'));
+
+loginBtn.addEventListener('click', handleLogin);
+registerBtn.addEventListener('click', handleRegister);
+
+// Allow Enter key in auth forms
+loginPassword.addEventListener('keydown', e => { if (e.key === 'Enter') handleLogin(); });
+loginUsername.addEventListener('keydown', e => { if (e.key === 'Enter') handleLogin(); });
+regPassword.addEventListener('keydown', e => { if (e.key === 'Enter') handleRegister(); });
+
+// Bootstrap: show auth or app based on stored token.
+checkAuth();
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+function getToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+function setToken(token) {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+function clearToken() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+function authHeaders() {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function checkAuth() {
+  const token = getToken();
+  if (!token) {
+    showAuth();
+    return;
+  }
+  // Validate by trying a protected endpoint.
+  try {
+    const res = await fetch(`${API}/api/jobs`, { headers: authHeaders() });
+    if (res.status === 401) {
+      clearToken();
+      showAuth();
+    } else {
+      showApp();
+    }
+  } catch {
+    showApp(); // network error — show app optimistically, requests will fail individually
+  }
+}
+
+function showAuth() {
+  authSection.hidden = false;
+  appMain.hidden = true;
+  recentSection.hidden = true;
+  userInfo.hidden = true;
+}
+
+function showApp() {
+  authSection.hidden = true;
+  appMain.hidden = false;
+  recentSection.hidden = false;
+  userInfo.hidden = false;
+  loadRecentJobs();
+}
+
+function switchTab(tab) {
+  const isLogin = tab === 'login';
+  tabLogin.classList.toggle('active', isLogin);
+  tabRegister.classList.toggle('active', !isLogin);
+  formLogin.hidden = !isLogin;
+  formRegister.hidden = isLogin;
+  loginError.hidden = true;
+  regError.hidden = true;
+}
+
+async function handleLogin() {
+  const username = loginUsername.value.trim();
+  const password = loginPassword.value;
+  if (!username || !password) {
+    showAuthError(loginError, '请输入用户名和密码');
+    return;
+  }
+
+  loginBtn.disabled = true;
+  loginError.hidden = true;
+  try {
+    const res = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showAuthError(loginError, data.error || '登录失败');
+      return;
+    }
+    setToken(data.token);
+    usernameDisplay.textContent = username;
+    showApp();
+  } catch {
+    showAuthError(loginError, '网络错误，请重试');
+  } finally {
+    loginBtn.disabled = false;
+  }
+}
+
+async function handleRegister() {
+  const username = regUsername.value.trim();
+  const password = regPassword.value;
+  if (!username || !password) {
+    showAuthError(regError, '请输入用户名和密码');
+    return;
+  }
+
+  registerBtn.disabled = true;
+  regError.hidden = true;
+  try {
+    const res = await fetch(`${API}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showAuthError(regError, data.error || '注册失败');
+      return;
+    }
+    setToken(data.token);
+    usernameDisplay.textContent = username;
+    showApp();
+  } catch {
+    showAuthError(regError, '网络错误，请重试');
+  } finally {
+    registerBtn.disabled = false;
+  }
+}
+
+async function handleLogout() {
+  const token = getToken();
+  if (token) {
+    await fetch(`${API}/api/auth/logout`, {
+      method: 'POST',
+      headers: { ...authHeaders() },
+    }).catch(() => {});
+  }
+  clearToken();
+  showAuth();
+  switchTab('login');
+  loginUsername.value = '';
+  loginPassword.value = '';
+}
+
+function showAuthError(el, msg) {
+  el.textContent = msg;
+  el.hidden = false;
+}
 
 // ── Drop Zone ─────────────────────────────────────────────────────────────────
 function initDropZone(zone, input, nameEl) {
@@ -141,6 +325,11 @@ async function handleSubmit() {
     showJobSection(job);
     startPolling(job.job_id);
   } catch (err) {
+    if (err.status === 401) {
+      clearToken();
+      showAuth();
+      return;
+    }
     console.error(err);
     alert('操作失败: ' + err.message);
     submitBtn.disabled = false;
@@ -150,15 +339,19 @@ async function handleSubmit() {
 
 // Returns { key, name } for the uploaded file.
 async function uploadFile(file, progressEl) {
-  const res = await fetch(`${API}/api/upload-url`, {
+  const res = await apiFetch(`${API}/api/upload-url`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({
       filename: file.name,
       content_type: file.type || 'application/octet-stream',
     }),
   });
-  if (!res.ok) throw new Error('获取上传链接失败');
+  if (!res.ok) {
+    const e = new Error('获取上传链接失败');
+    e.status = res.status;
+    throw e;
+  }
   const { upload_url, object_key } = await res.json();
 
   await xhrUpload(file, upload_url, pct => { progressEl.style.width = `${pct}%`; });
@@ -183,9 +376,9 @@ function xhrUpload(file, url, onProgress) {
 }
 
 async function createJob(audio, vtt) {
-  const res = await fetch(`${API}/api/jobs`, {
+  const res = await apiFetch(`${API}/api/jobs`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({
       audio_key:    audio.key,
       vtt_key:      vtt.key,
@@ -199,9 +392,24 @@ async function createJob(audio, vtt) {
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || '创建任务失败');
+    const e = new Error(data.error || '创建任务失败');
+    e.status = res.status;
+    throw e;
   }
   return res.json();
+}
+
+// apiFetch wraps fetch and handles 401 → logout.
+async function apiFetch(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) {
+    clearToken();
+    showAuth();
+    const e = new Error('Session expired');
+    e.status = 401;
+    throw e;
+  }
+  return res;
 }
 
 // ── Job Section ───────────────────────────────────────────────────────────────
@@ -217,7 +425,6 @@ function updateJobDisplay(job) {
   const { status, job_id, audio_name, progress, error } = job;
 
   statusLed.className = `status-indicator ${status}`;
-  // Show original filename if available, fall back to job ID
   jobIdEl.textContent = audio_name ? audio_name : `Job · ${job_id}`;
 
   if (status === 'failed') {
@@ -237,7 +444,7 @@ function updateJobDisplay(job) {
   if (status === 'completed') {
     downloadBtn.hidden = false;
     newJobBtn.hidden = false;
-    downloadBtn.onclick = () => { window.location.href = `${API}/api/jobs/${job_id}/download`; };
+    downloadBtn.onclick = () => { window.location.href = `${API}/api/jobs/${job_id}/download?token=${getToken()}`; };
   }
 }
 
@@ -260,7 +467,8 @@ function startPolling(jobId) {
   stopPolling();
   pollingTimer = setInterval(async () => {
     try {
-      const res = await fetch(`${API}/api/jobs/${jobId}`);
+      const res = await fetch(`${API}/api/jobs/${jobId}`, { headers: authHeaders() });
+      if (res.status === 401) { clearToken(); showAuth(); stopPolling(); return; }
       if (!res.ok) return;
       const job = await res.json();
       updateJobDisplay(job);
@@ -279,7 +487,8 @@ function stopPolling() {
 // ── Recent Jobs ───────────────────────────────────────────────────────────────
 async function loadRecentJobs() {
   try {
-    const res = await fetch(`${API}/api/jobs`);
+    const res = await fetch(`${API}/api/jobs`, { headers: authHeaders() });
+    if (res.status === 401) { clearToken(); showAuth(); return; }
     if (!res.ok) return;
     renderJobList(await res.json());
   } catch { /* ignore */ }
@@ -290,6 +499,7 @@ function renderJobList(jobs) {
     jobList.innerHTML = '<div class="job-list-empty">暂无任务</div>';
     return;
   }
+  const token = getToken();
   jobList.innerHTML = jobs.map(j => `
     <div class="job-item">
       <div class="job-dot ${j.status}"></div>
@@ -297,7 +507,7 @@ function renderJobList(jobs) {
       <div class="job-badge ${j.status}">${j.status}</div>
       <div class="job-time">${fmtTime(j.created_at)}</div>
       ${j.status === 'completed'
-        ? `<a class="job-download-link" href="${API}/api/jobs/${j.job_id}/download">下载</a>`
+        ? `<a class="job-download-link" href="${API}/api/jobs/${j.job_id}/download?token=${token}">下载</a>`
         : ''}
     </div>
   `).join('');

@@ -26,6 +26,11 @@ type Config struct {
 	// DatabaseURL, when set, switches persistence to PostgreSQL.
 	// Falls back to SQLite (DBPath) when empty.
 	DatabaseURL string
+
+	// Auth / account management
+	MaxActiveAccounts int
+	AccountTTLHours   int
+	SessionTTLHours   int
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -48,6 +53,10 @@ func Load() Config {
 		AuthPass: envStr("AUTH_PASS", ""),
 
 		DatabaseURL: envStr("DATABASE_URL", ""),
+
+		MaxActiveAccounts: envInt("MAX_ACTIVE_ACCOUNTS", 100),
+		AccountTTLHours:   envInt("ACCOUNT_TTL_HOURS", 24),
+		SessionTTLHours:   envInt("SESSION_TTL_HOURS", 24),
 	}
 }
 

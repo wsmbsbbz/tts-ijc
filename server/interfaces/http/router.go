@@ -8,12 +8,23 @@ import (
 )
 
 // NewRouter creates the HTTP mux with all API routes registered.
-func NewRouter(jobHandler *JobHandler, uploadHandler *UploadHandler, opts ...func(http.Handler) http.Handler) http.Handler {
+func NewRouter(
+	jobHandler *JobHandler,
+	uploadHandler *UploadHandler,
+	authHandler *AuthHandler,
+	sessionAuth func(http.Handler) http.Handler,
+	opts ...func(http.Handler) http.Handler,
+) http.Handler {
 	mux := http.NewServeMux()
 
-	// API routes
-	mux.HandleFunc("/api/upload-url", uploadHandler.HandleRequestURL)
-	mux.HandleFunc("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
+	// Public auth routes
+	mux.HandleFunc("/api/auth/register", authHandler.HandleRegister)
+	mux.HandleFunc("/api/auth/login", authHandler.HandleLogin)
+	mux.HandleFunc("/api/auth/logout", authHandler.HandleLogout)
+
+	// Protected API routes — wrapped individually with sessionAuth.
+	mux.Handle("/api/upload-url", sessionAuth(http.HandlerFunc(uploadHandler.HandleRequestURL)))
+	mux.Handle("/api/jobs", sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
 			jobHandler.HandleCreate(w, r)
@@ -22,14 +33,14 @@ func NewRouter(jobHandler *JobHandler, uploadHandler *UploadHandler, opts ...fun
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
-	})
-	mux.HandleFunc("/api/jobs/", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("/api/jobs/", sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/download") {
 			jobHandler.HandleDownload(w, r)
 		} else {
 			jobHandler.HandleGet(w, r)
 		}
-	})
+	})))
 
 	// Static frontend (served when FRONTEND_DIR is set)
 	if dir := os.Getenv("FRONTEND_DIR"); dir != "" {

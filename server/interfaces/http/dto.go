@@ -1,6 +1,8 @@
 package http
 
 import (
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/wsmbsbbz/tts-ijc/server/domain"
@@ -76,4 +78,35 @@ func JobFromDomain(j domain.Job) JobResponse {
 // ErrorResponse is the JSON body for error responses.
 type ErrorResponse struct {
 	Error string `json:"error"`
+}
+
+// --- Auth DTOs ---
+
+// RegisterRequest is the JSON body for POST /api/auth/register.
+type RegisterRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// LoginRequest is the JSON body for POST /api/auth/login.
+type LoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// AuthResponse is returned on successful register/login.
+type AuthResponse struct {
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// --- Helpers ---
+
+// extractBearerToken reads the token from "Authorization: Bearer <token>".
+func extractBearerToken(r *http.Request) string {
+	v := r.Header.Get("Authorization")
+	if !strings.HasPrefix(v, "Bearer ") {
+		return ""
+	}
+	return strings.TrimPrefix(v, "Bearer ")
 }

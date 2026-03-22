@@ -73,6 +73,7 @@ func migrateTable(db *sql.DB) error {
 	for _, stmt := range []string{
 		"ALTER TABLE jobs ADD COLUMN audio_name TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE jobs ADD COLUMN vtt_name   TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE jobs ADD COLUMN user_id    TEXT NOT NULL DEFAULT ''",
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return fmt.Errorf("migrate: %w", err)
@@ -88,13 +89,13 @@ func (r *SQLiteJobRepo) Close() error {
 
 func (r *SQLiteJobRepo) Save(ctx context.Context, job domain.Job) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO jobs (id, status, progress, audio_key, vtt_key, output_key,
+		INSERT INTO jobs (id, user_id, status, progress, audio_key, vtt_key, output_key,
 		                  audio_name, vtt_name,
 		                  tts_provider, tts_volume, no_speedup, concurrency,
 		                  created_at, completed_at, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		job.ID, string(job.Status), job.Progress,
+		job.ID, job.UserID, string(job.Status), job.Progress,
 		job.AudioKey, job.VTTKey, job.OutputKey,
 		job.AudioName, job.VTTName,
 		job.Config.TTSProvider, job.Config.TTSVolume,
@@ -111,7 +112,7 @@ func (r *SQLiteJobRepo) Save(ctx context.Context, job domain.Job) error {
 
 func (r *SQLiteJobRepo) FindByID(ctx context.Context, id string) (domain.Job, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, status, progress, audio_key, vtt_key, output_key,
+		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       created_at, completed_at, error
@@ -120,14 +121,14 @@ func (r *SQLiteJobRepo) FindByID(ctx context.Context, id string) (domain.Job, er
 	return scanJob(row)
 }
 
-func (r *SQLiteJobRepo) ListRecent(ctx context.Context, limit int) ([]domain.Job, error) {
+func (r *SQLiteJobRepo) ListRecent(ctx context.Context, userID string, limit int) ([]domain.Job, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, status, progress, audio_key, vtt_key, output_key,
+		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       created_at, completed_at, error
-		FROM jobs ORDER BY created_at DESC LIMIT ?
-	`, limit)
+		FROM jobs WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
+	`, userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}
@@ -172,7 +173,8 @@ func (r *SQLiteJobRepo) DeleteExpired(ctx context.Context, ttl time.Duration) ([
 
 	// First read the expired jobs so we can return them for R2 cleanup.
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, status, progress, audio_key, vtt_key, output_key,
+		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
+		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       created_at, completed_at, error
 		FROM jobs WHERE created_at < ? AND status IN (?, ?)
@@ -223,7 +225,7 @@ func scanJob(s scanner) (domain.Job, error) {
 	)
 
 	err := s.Scan(
-		&j.ID, &status, &j.Progress,
+		&j.ID, &j.UserID, &status, &j.Progress,
 		&j.AudioKey, &j.VTTKey, &j.OutputKey,
 		&j.AudioName, &j.VTTName,
 		&j.Config.TTSProvider, &j.Config.TTSVolume,

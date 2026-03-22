@@ -72,6 +72,7 @@ func migratePostgresTable(db *sql.DB) error {
 	for _, stmt := range []string{
 		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_name TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS vtt_name   TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS user_id    TEXT NOT NULL DEFAULT ''",
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "already exists") {
 			return fmt.Errorf("migrate: %w", err)
@@ -87,13 +88,13 @@ func (r *PostgresJobRepo) Close() error {
 
 func (r *PostgresJobRepo) Save(ctx context.Context, job domain.Job) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO jobs (id, status, progress, audio_key, vtt_key, output_key,
+		INSERT INTO jobs (id, user_id, status, progress, audio_key, vtt_key, output_key,
 		                  audio_name, vtt_name,
 		                  tts_provider, tts_volume, no_speedup, concurrency,
 		                  created_at, completed_at, error)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 	`,
-		job.ID, string(job.Status), job.Progress,
+		job.ID, job.UserID, string(job.Status), job.Progress,
 		job.AudioKey, job.VTTKey, job.OutputKey,
 		job.AudioName, job.VTTName,
 		job.Config.TTSProvider, job.Config.TTSVolume,
@@ -109,7 +110,7 @@ func (r *PostgresJobRepo) Save(ctx context.Context, job domain.Job) error {
 
 func (r *PostgresJobRepo) FindByID(ctx context.Context, id string) (domain.Job, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, status, progress, audio_key, vtt_key, output_key,
+		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       created_at, completed_at, error
@@ -118,14 +119,14 @@ func (r *PostgresJobRepo) FindByID(ctx context.Context, id string) (domain.Job, 
 	return scanPgJob(row)
 }
 
-func (r *PostgresJobRepo) ListRecent(ctx context.Context, limit int) ([]domain.Job, error) {
+func (r *PostgresJobRepo) ListRecent(ctx context.Context, userID string, limit int) ([]domain.Job, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, status, progress, audio_key, vtt_key, output_key,
+		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       created_at, completed_at, error
-		FROM jobs ORDER BY created_at DESC LIMIT $1
-	`, limit)
+		FROM jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2
+	`, userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}
@@ -167,7 +168,8 @@ func (r *PostgresJobRepo) DeleteExpired(ctx context.Context, ttl time.Duration) 
 	cutoff := time.Now().Add(-ttl)
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, status, progress, audio_key, vtt_key, output_key,
+		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
+		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       created_at, completed_at, error
 		FROM jobs WHERE created_at < $1 AND status IN ($2, $3)
@@ -212,7 +214,7 @@ func scanPgJob(s scanner) (domain.Job, error) {
 	)
 
 	err := s.Scan(
-		&j.ID, &status, &j.Progress,
+		&j.ID, &j.UserID, &status, &j.Progress,
 		&j.AudioKey, &j.VTTKey, &j.OutputKey,
 		&j.AudioName, &j.VTTName,
 		&j.Config.TTSProvider, &j.Config.TTSVolume,

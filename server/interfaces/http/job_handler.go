@@ -42,7 +42,8 @@ func (h *JobHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.jobSvc.CreateJob(r.Context(), req.AudioKey, req.VTTKey, req.AudioName, req.VTTName, req.ToJobConfig())
+	user, _ := UserFromContext(r.Context())
+	job, err := h.jobSvc.CreateJob(r.Context(), user.ID, req.AudioKey, req.VTTKey, req.AudioName, req.VTTName, req.ToJobConfig())
 	if err != nil {
 		if errors.Is(err, domain.ErrQueueFull) {
 			writeError(w, http.StatusServiceUnavailable, "server is busy, please try again later")
@@ -78,6 +79,13 @@ func (h *JobHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Prevent users from accessing each other's jobs.
+	user, _ := UserFromContext(r.Context())
+	if job.UserID != "" && job.UserID != user.ID {
+		writeError(w, http.StatusNotFound, "job not found")
+		return
+	}
+
 	writeJSON(w, http.StatusOK, JobFromDomain(job))
 }
 
@@ -88,7 +96,8 @@ func (h *JobHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs, err := h.jobSvc.ListJobs(r.Context(), 20)
+	user, _ := UserFromContext(r.Context())
+	jobs, err := h.jobSvc.ListJobs(r.Context(), user.ID, 20)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list jobs")
 		return
@@ -125,6 +134,13 @@ func (h *JobHandler) HandleDownload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to get job")
+		return
+	}
+
+	// Prevent users from downloading each other's jobs.
+	downloadUser, _ := UserFromContext(r.Context())
+	if job.UserID != "" && job.UserID != downloadUser.ID {
+		writeError(w, http.StatusNotFound, "job not found")
 		return
 	}
 

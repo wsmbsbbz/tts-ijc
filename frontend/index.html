@@ -22,10 +22,54 @@
       </div>
       <span class="logo-text">Translation<em>Combinator</em></span>
     </div>
-    <div class="header-badge">TTS Studio</div>
+    <div class="header-right">
+      <div class="header-badge">TTS Studio</div>
+      <div id="user-info" hidden>
+        <span id="username-display" class="header-username"></span>
+        <button id="logout-btn" class="btn-ghost btn-sm">退出</button>
+      </div>
+    </div>
   </header>
 
-  <main class="main">
+  <!-- Auth Section -->
+  <section id="auth-section" class="auth-wrap" hidden>
+    <div class="auth-card card">
+      <div class="auth-tabs">
+        <button id="tab-login"    class="auth-tab active" data-tab="login">登录</button>
+        <button id="tab-register" class="auth-tab"        data-tab="register">注册</button>
+      </div>
+
+      <!-- Login form -->
+      <div id="form-login" class="auth-form">
+        <div class="field">
+          <label class="field-label">用户名</label>
+          <input id="login-username" type="text" class="field-input" placeholder="请输入用户名" autocomplete="username" />
+        </div>
+        <div class="field">
+          <label class="field-label">密码</label>
+          <input id="login-password" type="password" class="field-input" placeholder="请输入密码" autocomplete="current-password" />
+        </div>
+        <div id="login-error" class="auth-error" hidden></div>
+        <button id="login-btn" class="btn-primary auth-submit">登录</button>
+      </div>
+
+      <!-- Register form -->
+      <div id="form-register" class="auth-form" hidden>
+        <div class="field">
+          <label class="field-label">用户名 <span class="field-hint">3–32 个字符</span></label>
+          <input id="reg-username" type="text" class="field-input" placeholder="请输入用户名" autocomplete="username" />
+        </div>
+        <div class="field">
+          <label class="field-label">密码 <span class="field-hint">至少 6 个字符</span></label>
+          <input id="reg-password" type="password" class="field-input" placeholder="请输入密码" autocomplete="new-password" />
+        </div>
+        <div id="reg-error" class="auth-error" hidden></div>
+        <button id="register-btn" class="btn-primary auth-submit">注册</button>
+      </div>
+    </div>
+  </section>
+
+  <main class="main" id="app-main" hidden>
 
     <!-- Upload Section -->
     <section id="upload-section" class="card">
@@ -139,8 +183,9 @@
 
   </main>
 
+
   <!-- Recent Jobs -->
-  <section class="recent-section">
+  <section class="recent-section" id="recent-section" hidden>
     <div class="recent-header">
       <h2 class="recent-title">最近任务</h2>
       <button id="refresh-btn" class="btn-ghost">
