@@ -6,15 +6,13 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wsmbsbbz/tts-ijc/server/domain"
 )
 
-const (
-	jobTimeout       = 30 * time.Minute
-	downloadURLExpiry = 1 * time.Hour
-)
+const jobTimeout = 30 * time.Minute
 
 // WorkerService consumes job IDs from the queue and processes them.
 type WorkerService struct {
@@ -118,7 +116,11 @@ func (w *WorkerService) processJob(ctx context.Context, workerID int, jobID stri
 
 	// Upload result to R2
 	_ = w.repo.UpdateStatus(ctx, jobID, domain.StatusProcessing, "uploading result")
-	outputKey := fmt.Sprintf("outputs/%s/output.mp3", jobID)
+	stem := strings.TrimSuffix(job.AudioName, filepath.Ext(job.AudioName))
+	if stem == "" {
+		stem = "output"
+	}
+	outputKey := fmt.Sprintf("outputs/%s/%s/%s.mp3", job.UserID, jobID, stem)
 
 	if err := w.storage.Upload(ctx, outputPath, outputKey); err != nil {
 		w.failJob(ctx, jobID, fmt.Sprintf("upload result: %v", err))

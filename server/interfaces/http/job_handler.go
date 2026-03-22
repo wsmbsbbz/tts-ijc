@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -149,7 +150,11 @@ func (h *JobHandler) HandleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	downloadURL, err := h.storage.GenerateDownloadURL(r.Context(), job.OutputKey, downloadURLExpiry, job.AudioName)
+	stem := strings.TrimSuffix(job.AudioName, path.Ext(job.AudioName))
+	if stem == "" {
+		stem = "output"
+	}
+	downloadURL, err := h.storage.GenerateDownloadURL(r.Context(), job.OutputKey, downloadURLExpiry, stem+".mp3")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to generate download URL")
 		return
