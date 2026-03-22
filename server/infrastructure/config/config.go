@@ -28,6 +28,9 @@ type Config struct {
 	MaxActiveAccounts int
 	AccountTTLHours   int
 	SessionTTLHours   int
+
+	// AllowedTTSProviders is the comma-separated list of enabled TTS engines.
+	AllowedTTSProviders string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -48,9 +51,10 @@ func Load() Config {
 
 		DatabaseURL: envStr("DATABASE_URL", ""),
 
-		MaxActiveAccounts: envInt("MAX_ACTIVE_ACCOUNTS", 100),
-		AccountTTLHours:   envInt("ACCOUNT_TTL_HOURS", 24),
-		SessionTTLHours:   envInt("SESSION_TTL_HOURS", 24),
+		MaxActiveAccounts:   envInt("MAX_ACTIVE_ACCOUNTS", 100),
+		AccountTTLHours:     envInt("ACCOUNT_TTL_HOURS", 24),
+		SessionTTLHours:     envInt("SESSION_TTL_HOURS", 24),
+		AllowedTTSProviders: envStr("ALLOWED_TTS_PROVIDERS", "edge"),
 	}
 }
 

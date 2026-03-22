@@ -86,7 +86,7 @@ func main() {
 
 	// --- HTTP ---
 
-	jobHandler := httpintf.NewJobHandler(jobSvc, r2)
+	jobHandler := httpintf.NewJobHandler(jobSvc, r2, cfg.AllowedTTSProviders)
 	uploadHandler := httpintf.NewUploadHandler(uploadSvc)
 	authHandler := httpintf.NewAuthHandler(authSvc)
 	sessionAuth := httpintf.SessionAuth(authSvc)

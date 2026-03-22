@@ -16,13 +16,35 @@ const downloadURLExpiry = 5 * time.Minute
 
 // JobHandler handles job-related HTTP requests.
 type JobHandler struct {
-	jobSvc  *application.JobService
-	storage domain.FileStorage
+	jobSvc           *application.JobService
+	storage          domain.FileStorage
+	allowedProviders map[string]bool
+	providerList     []string
 }
 
 // NewJobHandler creates a JobHandler.
-func NewJobHandler(jobSvc *application.JobService, storage domain.FileStorage) *JobHandler {
-	return &JobHandler{jobSvc: jobSvc, storage: storage}
+// allowedProviders is the comma-separated value from config (e.g. "edge,gtts").
+func NewJobHandler(jobSvc *application.JobService, storage domain.FileStorage, allowedProviders string) *JobHandler {
+	list := strings.Split(allowedProviders, ",")
+	set := make(map[string]bool, len(list))
+	for _, p := range list {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			set[p] = true
+		}
+	}
+	return &JobHandler{
+		jobSvc:           jobSvc,
+		storage:          storage,
+		allowedProviders: set,
+		providerList:     list,
+	}
+}
+
+// HandleListProviders handles GET /api/tts-providers.
+// Returns the list of TTS providers enabled on this server.
+func (h *JobHandler) HandleListProviders(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.providerList)
 }
 
 // HandleCreate handles POST /api/jobs.
@@ -40,6 +62,11 @@ func (h *JobHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 
 	if req.AudioKey == "" || req.VTTKey == "" {
 		writeError(w, http.StatusBadRequest, "audio_key and vtt_key are required")
+		return
+	}
+
+	if req.TTSProvider != "" && !h.allowedProviders[req.TTSProvider] {
+		writeError(w, http.StatusBadRequest, "unsupported TTS provider")
 		return
 	}
 

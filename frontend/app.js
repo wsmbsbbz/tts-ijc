@@ -90,8 +90,29 @@ loginPassword.addEventListener('keydown', e => { if (e.key === 'Enter') handleLo
 loginUsername.addEventListener('keydown', e => { if (e.key === 'Enter') handleLogin(); });
 regPassword.addEventListener('keydown', e => { if (e.key === 'Enter') handleRegister(); });
 
-// Bootstrap: show auth or app based on stored token.
+// Bootstrap
+loadTTSProviders();
 checkAuth();
+
+// ── TTS Providers ─────────────────────────────────────────────────────────────
+const providerLabels = {
+  edge:   'Edge TTS (Microsoft)',
+  gtts:   'gTTS (Google)',
+  azure:  'Azure Cognitive',
+  openai: 'OpenAI TTS',
+  gcloud: 'Google Cloud',
+};
+
+async function loadTTSProviders() {
+  try {
+    const res = await fetch(`${API}/api/tts-providers`);
+    if (!res.ok) return;
+    const providers = await res.json();
+    ttsProvider.innerHTML = providers
+      .map(p => `<option value="${p}">${providerLabels[p] || p}</option>`)
+      .join('');
+  } catch { /* keep select empty, submit is disabled until files chosen */ }
+}
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 function getToken() {

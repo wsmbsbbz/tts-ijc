@@ -16,10 +16,11 @@ func NewRouter(
 ) http.Handler {
 	mux := http.NewServeMux()
 
-	// Public auth routes
+	// Public routes
 	mux.HandleFunc("/api/auth/register", authHandler.HandleRegister)
 	mux.HandleFunc("/api/auth/login", authHandler.HandleLogin)
 	mux.HandleFunc("/api/auth/logout", authHandler.HandleLogout)
+	mux.HandleFunc("/api/tts-providers", jobHandler.HandleListProviders)
 
 	// Protected API routes — wrapped individually with sessionAuth.
 	mux.Handle("/api/upload-url", sessionAuth(http.HandlerFunc(uploadHandler.HandleRequestURL)))
