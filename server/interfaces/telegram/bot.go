@@ -132,7 +132,7 @@ func (b *BotServer) dispatch(ctx context.Context, u Update) {
 
 	switch {
 	case msg.Text != "" && strings.HasPrefix(msg.Text, "/"):
-		b.handleCommand(ctx, chatID, sess, msg.Text)
+		b.handleCommand(ctx, chatID, sess, msg.From.ID, msg.Text)
 	case msg.Document != nil || msg.Audio != nil || msg.Voice != nil || msg.Video != nil:
 		b.handleFile(ctx, chatID, sess, msg)
 	case msg.Text != "":
@@ -165,7 +165,7 @@ Convert VTT subtitles to speech and mix them into audio.
 Use /bind to link your Telegram to an existing account.
 Your job history and quota will then be shared with that account.`
 
-func (b *BotServer) handleCommand(ctx context.Context, chatID int64, sess *session, text string) {
+func (b *BotServer) handleCommand(ctx context.Context, chatID int64, sess *session, tgUserID int64, text string) {
 	parts := strings.Fields(text)
 	cmd := parts[0]
 	// Strip @BotName suffix (group chats).
@@ -200,10 +200,10 @@ func (b *BotServer) handleCommand(ctx context.Context, chatID int64, sess *sessi
 		b.handleJobs(ctx, chatID, sess.userID)
 
 	case "/bind":
-		b.handleBind(ctx, chatID, msg.From.ID, sess.userID, args)
+		b.handleBind(ctx, chatID, tgUserID, sess.userID, args)
 
 	case "/unbind":
-		b.handleUnbind(ctx, chatID, msg.From.ID, sess.userID)
+		b.handleUnbind(ctx, chatID, tgUserID, sess.userID)
 
 	case "/help":
 		b.api.sendMessage(ctx, chatID, helpText, nil) //nolint:errcheck
