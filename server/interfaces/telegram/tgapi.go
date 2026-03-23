@@ -1,0 +1,219 @@
+package telegram
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+)
+
+const tgAPIBase = "https://api.telegram.org"
+
+// --- Telegram Bot API types ---
+
+// Update is an incoming update from Telegram.
+type Update struct {
+	UpdateID      int            `json:"update_id"`
+	Message       *Message       `json:"message"`
+	CallbackQuery *CallbackQuery `json:"callback_query"`
+}
+
+// Message is a Telegram message.
+type Message struct {
+	MessageID int       `json:"message_id"`
+	From      *TGUser   `json:"from"`
+	Chat      Chat      `json:"chat"`
+	Text      string    `json:"text"`
+	Document  *Document `json:"document"`
+	Audio     *Audio    `json:"audio"`
+	Voice     *Voice    `json:"voice"`
+	Video     *Video    `json:"video"`
+}
+
+// TGUser is a Telegram user or bot.
+type TGUser struct {
+	ID        int64  `json:"id"`
+	FirstName string `json:"first_name"`
+	Username  string `json:"username"`
+}
+
+// Chat is the Telegram chat the message was sent in.
+type Chat struct {
+	ID int64 `json:"id"`
+}
+
+// Document is a Telegram file sent as a document.
+type Document struct {
+	FileID   string `json:"file_id"`
+	FileName string `json:"file_name"`
+	FileSize int64  `json:"file_size"`
+	MIMEType string `json:"mime_type"`
+}
+
+// Audio is an audio file.
+type Audio struct {
+	FileID   string `json:"file_id"`
+	FileName string `json:"file_name"`
+	FileSize int64  `json:"file_size"`
+	MIMEType string `json:"mime_type"`
+}
+
+// Voice is a voice message.
+type Voice struct {
+	FileID   string `json:"file_id"`
+	FileSize int64  `json:"file_size"`
+	MIMEType string `json:"mime_type"`
+}
+
+// Video is a video file.
+type Video struct {
+	FileID   string `json:"file_id"`
+	FileName string `json:"file_name"`
+	FileSize int64  `json:"file_size"`
+	MIMEType string `json:"mime_type"`
+}
+
+// CallbackQuery is fired when a user taps an inline keyboard button.
+type CallbackQuery struct {
+	ID      string   `json:"id"`
+	From    *TGUser  `json:"from"`
+	Message *Message `json:"message"`
+	Data    string   `json:"data"`
+}
+
+// TGFile contains metadata needed to download a file from Telegram.
+type TGFile struct {
+	FileID   string `json:"file_id"`
+	FilePath string `json:"file_path"`
+	FileSize int64  `json:"file_size"`
+}
+
+// InlineKeyboardMarkup is an inline keyboard attached to a message.
+type InlineKeyboardMarkup struct {
+	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
+}
+
+// InlineKeyboardButton is a single button in an inline keyboard.
+type InlineKeyboardButton struct {
+	Text         string `json:"text"`
+	CallbackData string `json:"callback_data,omitempty"`
+}
+
+// --- API client ---
+
+type tgAPI struct {
+	token  string
+	client *http.Client
+}
+
+func newTGAPI(token string) *tgAPI {
+	return &tgAPI{
+		token:  token,
+		client: &http.Client{Timeout: 90 * time.Second},
+	}
+}
+
+func (a *tgAPI) methodURL(method string) string {
+	return fmt.Sprintf("%s/bot%s/%s", tgAPIBase, a.token, method)
+}
+
+// FileDownloadURL returns the HTTPS URL to download a file from Telegram.
+func (a *tgAPI) FileDownloadURL(filePath string) string {
+	return fmt.Sprintf("%s/file/bot%s/%s", tgAPIBase, a.token, filePath)
+}
+
+type apiResp struct {
+	OK          bool            `json:"ok"`
+	Result      json.RawMessage `json:"result"`
+	Description string          `json:"description"`
+	ErrorCode   int             `json:"error_code"`
+}
+
+func (a *tgAPI) call(ctx context.Context, method string, payload any) (json.RawMessage, error) {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.methodURL(method), bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var ar apiResp
+	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	if !ar.OK {
+		return nil, fmt.Errorf("telegram api [%d]: %s", ar.ErrorCode, ar.Description)
+	}
+	return ar.Result, nil
+}
+
+func (a *tgAPI) getUpdates(ctx context.Context, offset, timeout int) ([]Update, error) {
+	result, err := a.call(ctx, "getUpdates", map[string]any{
+		"offset":          offset,
+		"timeout":         timeout,
+		"allowed_updates": []string{"message", "callback_query"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	var updates []Update
+	if err := json.Unmarshal(result, &updates); err != nil {
+		return nil, fmt.Errorf("parse updates: %w", err)
+	}
+	return updates, nil
+}
+
+func (a *tgAPI) sendMessage(ctx context.Context, chatID int64, text string, keyboard *InlineKeyboardMarkup) error {
+	payload := map[string]any{
+		"chat_id":    chatID,
+		"text":       text,
+		"parse_mode": "HTML",
+	}
+	if keyboard != nil {
+		payload["reply_markup"] = keyboard
+	}
+	_, err := a.call(ctx, "sendMessage", payload)
+	return err
+}
+
+func (a *tgAPI) answerCallbackQuery(ctx context.Context, callbackID, text string) error {
+	_, err := a.call(ctx, "answerCallbackQuery", map[string]any{
+		"callback_query_id": callbackID,
+		"text":              text,
+	})
+	return err
+}
+
+func (a *tgAPI) getFile(ctx context.Context, fileID string) (TGFile, error) {
+	result, err := a.call(ctx, "getFile", map[string]any{"file_id": fileID})
+	if err != nil {
+		return TGFile{}, err
+	}
+	var f TGFile
+	if err := json.Unmarshal(result, &f); err != nil {
+		return TGFile{}, err
+	}
+	return f, nil
+}
+
+// sendDocument sends a file to chatID using a URL (Telegram fetches it directly).
+func (a *tgAPI) sendDocument(ctx context.Context, chatID int64, documentURL, caption string) error {
+	_, err := a.call(ctx, "sendDocument", map[string]any{
+		"chat_id":    chatID,
+		"document":   documentURL,
+		"caption":    caption,
+		"parse_mode": "HTML",
+	})
+	return err
+}

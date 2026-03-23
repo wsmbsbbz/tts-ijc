@@ -21,6 +21,7 @@ import (
 	"github.com/wsmbsbbz/tts-ijc/server/infrastructure/storage"
 	"github.com/wsmbsbbz/tts-ijc/server/infrastructure/translator"
 	httpintf "github.com/wsmbsbbz/tts-ijc/server/interfaces/http"
+	"github.com/wsmbsbbz/tts-ijc/server/interfaces/telegram"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
@@ -115,6 +116,22 @@ func main() {
 		defer shutdownCancel()
 		srv.Shutdown(shutdownCtx)
 	}()
+
+	// --- Telegram bot (optional) ---
+
+	if cfg.TelegramBotToken != "" {
+		botSrv := telegram.NewBotServer(telegram.BotConfig{
+			Token:            cfg.TelegramBotToken,
+			JobSvc:           jobSvc,
+			Storage:          r2,
+			UserRepo:         userRepo,
+			IDFunc:           idFunc,
+			AllowedProviders: cfg.AllowedTTSProviders,
+			UploadLimit:      cfg.UserUploadLimitBytes,
+		})
+		go botSrv.Start(ctx)
+		log.Println("telegram bot: enabled")
+	}
 
 	log.Printf("listening on :%d", cfg.Port)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

@@ -7,13 +7,13 @@ import (
 
 // Config holds all server configuration, loaded from environment variables.
 type Config struct {
-	Port       int
-	DBPath     string
-	PythonBin  string
-	PythonDir  string
-	MaxWorkers int
+	Port        int
+	DBPath      string
+	PythonBin   string
+	PythonDir   string
+	MaxWorkers  int
 	JobTTLHours int
-	QueueSize  int
+	QueueSize   int
 
 	R2Endpoint        string
 	R2AccessKeyID     string
@@ -35,18 +35,21 @@ type Config struct {
 	// Per-user lifetime quotas (bytes).
 	UserUploadLimitBytes   int64
 	UserDownloadLimitBytes int64
+
+	// Telegram bot configuration. Bot is disabled when TelegramBotToken is empty.
+	TelegramBotToken string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
 func Load() Config {
 	return Config{
-		Port:       envInt("PORT", 8080),
-		DBPath:     envStr("DB_PATH", "./data/jobs.db"),
-		PythonBin:  envStr("PYTHON_BIN", "python3"),
-		PythonDir:  envStr("PYTHON_DIR", "/opt/tc"),
-		MaxWorkers: envInt("MAX_WORKERS", 2),
+		Port:        envInt("PORT", 8080),
+		DBPath:      envStr("DB_PATH", "./data/jobs.db"),
+		PythonBin:   envStr("PYTHON_BIN", "python3"),
+		PythonDir:   envStr("PYTHON_DIR", "/opt/tc"),
+		MaxWorkers:  envInt("MAX_WORKERS", 2),
 		JobTTLHours: envInt("JOB_TTL_HOURS", 24),
-		QueueSize:  envInt("QUEUE_SIZE", 20),
+		QueueSize:   envInt("QUEUE_SIZE", 20),
 
 		R2Endpoint:        envStr("R2_ENDPOINT", ""),
 		R2AccessKeyID:     envStr("R2_ACCESS_KEY_ID", ""),
@@ -55,12 +58,14 @@ func Load() Config {
 
 		DatabaseURL: envStr("DATABASE_URL", ""),
 
-		MaxActiveAccounts:   envInt("MAX_ACTIVE_ACCOUNTS", 100),
-		AccountTTLHours:     envInt("ACCOUNT_TTL_HOURS", 24),
-		SessionTTLHours:     envInt("SESSION_TTL_HOURS", 24),
+		MaxActiveAccounts:      envInt("MAX_ACTIVE_ACCOUNTS", 100),
+		AccountTTLHours:        envInt("ACCOUNT_TTL_HOURS", 24),
+		SessionTTLHours:        envInt("SESSION_TTL_HOURS", 24),
 		AllowedTTSProviders:    envStr("ALLOWED_TTS_PROVIDERS", "edge"),
-		UserUploadLimitBytes:   envInt64("USER_UPLOAD_LIMIT_BYTES", 1<<30),  // 1 GB
+		UserUploadLimitBytes:   envInt64("USER_UPLOAD_LIMIT_BYTES", 1<<30),   // 1 GB
 		UserDownloadLimitBytes: envInt64("USER_DOWNLOAD_LIMIT_BYTES", 3<<30), // 3 GB
+
+		TelegramBotToken: envStr("TELEGRAM_BOT_TOKEN", ""),
 	}
 }
 
