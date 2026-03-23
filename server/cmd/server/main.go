@@ -32,7 +32,7 @@ func main() {
 
 	// --- Persistence ---
 
-	jobRepo, userRepo, sessionRepo, closeDB := initRepos(cfg)
+	jobRepo, userRepo, sessionRepo, bindingRepo, closeDB := initRepos(cfg)
 	defer closeDB()
 
 	// --- Infrastructure ---
@@ -123,8 +123,10 @@ func main() {
 		botSrv := telegram.NewBotServer(telegram.BotConfig{
 			Token:            cfg.TelegramBotToken,
 			JobSvc:           jobSvc,
+			AuthSvc:          authSvc,
 			Storage:          r2,
 			UserRepo:         userRepo,
+			BindingRepo:      bindingRepo,
 			IDFunc:           idFunc,
 			AllowedProviders: cfg.AllowedTTSProviders,
 			UploadLimit:      cfg.UserUploadLimitBytes,
@@ -140,8 +142,8 @@ func main() {
 }
 
 // initRepos selects the persistence backend based on config.
-// Returns job, user, and session repos plus a close function.
-func initRepos(cfg config.Config) (domain.JobRepository, domain.UserRepository, domain.SessionRepository, func()) {
+// Returns job, user, session, and telegram binding repos plus a close function.
+func initRepos(cfg config.Config) (domain.JobRepository, domain.UserRepository, domain.SessionRepository, domain.TelegramBindingRepository, func()) {
 	if cfg.DatabaseURL != "" {
 		db, err := sql.Open("pgx", cfg.DatabaseURL)
 		if err != nil {
@@ -161,8 +163,13 @@ func initRepos(cfg config.Config) (domain.JobRepository, domain.UserRepository, 
 			log.Fatalf("init postgres user repos: %v", err)
 		}
 
+		bindingRepo, err := persistence.NewPostgresTelegramBindingRepo(db)
+		if err != nil {
+			log.Fatalf("init postgres telegram binding repo: %v", err)
+		}
+
 		log.Println("persistence: postgres")
-		return jobRepo, userRepo, sessionRepo, func() {
+		return jobRepo, userRepo, sessionRepo, bindingRepo, func() {
 			jobRepo.Close()
 			db.Close()
 		}
@@ -177,7 +184,7 @@ func initRepos(cfg config.Config) (domain.JobRepository, domain.UserRepository, 
 		log.Fatalf("init sqlite job repo: %v", err)
 	}
 
-	// Share the same SQLite file for user/session tables.
+	// Share the same SQLite file for user/session/binding tables.
 	db, err := openSQLiteDB(cfg.DBPath)
 	if err != nil {
 		log.Fatalf("open sqlite for user repos: %v", err)
@@ -188,8 +195,13 @@ func initRepos(cfg config.Config) (domain.JobRepository, domain.UserRepository, 
 		log.Fatalf("init sqlite user repos: %v", err)
 	}
 
+	bindingRepo, err := persistence.NewSQLiteTelegramBindingRepo(db)
+	if err != nil {
+		log.Fatalf("init sqlite telegram binding repo: %v", err)
+	}
+
 	log.Printf("persistence: sqlite (%s)", cfg.DBPath)
-	return jobRepo, userRepo, sessionRepo, func() {
+	return jobRepo, userRepo, sessionRepo, bindingRepo, func() {
 		jobRepo.Close()
 		db.Close()
 	}
