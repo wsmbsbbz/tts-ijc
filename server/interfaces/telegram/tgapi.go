@@ -217,3 +217,18 @@ func (a *tgAPI) sendDocument(ctx context.Context, chatID int64, documentURL, cap
 	})
 	return err
 }
+
+// BotCommand represents a single slash command shown in the Telegram menu.
+type BotCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+// setMyCommands registers the bot's command list with Telegram so users see
+// slash-command suggestions when they type "/".
+func (a *tgAPI) setMyCommands(ctx context.Context, commands []BotCommand) error {
+	_, err := a.call(ctx, "setMyCommands", map[string]any{
+		"commands": commands,
+	})
+	return err
+}
