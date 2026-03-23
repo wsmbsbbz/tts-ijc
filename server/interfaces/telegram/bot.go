@@ -60,9 +60,23 @@ func NewBotServer(cfg BotConfig) *BotServer {
 	}
 }
 
+// botCommands is the slash-command list registered with Telegram on startup.
+var botCommands = []BotCommand{
+	{Command: "new", Description: "Start a new translation job"},
+	{Command: "jobs", Description: "List completed jobs"},
+	{Command: "status", Description: "Show recent jobs (all statuses)"},
+	{Command: "bind", Description: "Bind to an existing account"},
+	{Command: "unbind", Description: "Remove account binding"},
+	{Command: "cancel", Description: "Cancel the current operation"},
+	{Command: "help", Description: "Show help"},
+}
+
 // Start runs the long-polling loop until ctx is cancelled.
 func (b *BotServer) Start(ctx context.Context) {
 	log.Println("tgbot: started (long-polling)")
+	if err := b.api.setMyCommands(ctx, botCommands); err != nil {
+		log.Printf("tgbot: setMyCommands: %v", err)
+	}
 	offset := 0
 	for {
 		select {
