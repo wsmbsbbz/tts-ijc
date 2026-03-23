@@ -21,16 +21,28 @@ func tgUsername(tgUserID int64) string {
 }
 
 // findOrCreateUser maps a Telegram user ID to a domain.User.
-// On first encounter a new user account is created with a long TTL.
-// The random password is never exposed; the bot accesses services directly.
+// If a binding exists the bound account is returned directly.
+// Otherwise a dedicated tg_<id> account is auto-registered on first encounter.
 func findOrCreateUser(
 	ctx context.Context,
 	tgUserID int64,
 	userRepo domain.UserRepository,
+	bindingRepo domain.TelegramBindingRepository,
 	idFunc func() string,
 ) (domain.User, error) {
-	username := tgUsername(tgUserID)
+	// Check if this Telegram account is bound to an existing user.
+	if binding, err := bindingRepo.FindByTelegramID(ctx, tgUserID); err == nil {
+		user, err := userRepo.FindByID(ctx, binding.UserID)
+		if err == nil {
+			return user, nil
+		}
+		// Bound user was deleted; fall through to auto-register.
+	} else if !errors.Is(err, domain.ErrTelegramBindingNotFound) {
+		return domain.User{}, fmt.Errorf("find binding: %w", err)
+	}
 
+	// No binding — find or create a dedicated bot account.
+	username := tgUsername(tgUserID)
 	user, err := userRepo.FindByUsername(ctx, username)
 	if err == nil {
 		return user, nil

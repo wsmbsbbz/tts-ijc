@@ -25,8 +25,10 @@ const (
 type BotConfig struct {
 	Token            string
 	JobSvc           *application.JobService
+	AuthSvc          *application.AuthService
 	Storage          domain.FileStorage
 	UserRepo         domain.UserRepository
+	BindingRepo      domain.TelegramBindingRepository
 	IDFunc           func() string
 	AllowedProviders string // comma-separated list, e.g. "edge,gtts"
 	UploadLimit      int64
@@ -104,7 +106,7 @@ func (b *BotServer) dispatch(ctx context.Context, u Update) {
 	msg := u.Message
 	chatID := msg.Chat.ID
 
-	user, err := findOrCreateUser(ctx, msg.From.ID, b.cfg.UserRepo, b.cfg.IDFunc)
+	user, err := findOrCreateUser(ctx, msg.From.ID, b.cfg.UserRepo, b.cfg.BindingRepo, b.cfg.IDFunc)
 	if err != nil {
 		log.Printf("tgbot: find/create user %d: %v", msg.From.ID, err)
 		b.api.sendMessage(ctx, chatID, "Internal error, please try again later.", nil) //nolint:errcheck
@@ -132,7 +134,10 @@ Convert VTT subtitles to speech and mix them into audio.
 
 <b>Commands:</b>
 /new — Start a new translation job
-/status — Show your recent jobs
+/jobs — List your completed jobs
+/status — Show your recent jobs (all statuses)
+/bind — Bind your Telegram account to an existing account
+/unbind — Remove account binding
 /cancel — Cancel the current operation
 /help — Show this message
 
@@ -140,7 +145,11 @@ Convert VTT subtitles to speech and mix them into audio.
 1. /new → send your audio file (MP3/WAV/OGG/M4A, max 20 MB)
 2. Send your WebVTT subtitle file (.vtt, max 20 MB)
 3. Choose TTS provider and settings
-4. Confirm — I'll notify you when done`
+4. Confirm — I'll notify you when done
+
+<b>Account binding:</b>
+Use /bind to link your Telegram to an existing account.
+Your job history and quota will then be shared with that account.`
 
 func (b *BotServer) handleCommand(ctx context.Context, chatID int64, sess *session, text string) {
 	parts := strings.Fields(text)
@@ -172,6 +181,15 @@ func (b *BotServer) handleCommand(ctx context.Context, chatID int64, sess *sessi
 
 	case "/status":
 		b.handleStatus(ctx, chatID, sess.userID, args)
+
+	case "/jobs":
+		b.handleJobs(ctx, chatID, sess.userID)
+
+	case "/bind":
+		b.handleBind(ctx, chatID, msg.From.ID, sess.userID, args)
+
+	case "/unbind":
+		b.handleUnbind(ctx, chatID, msg.From.ID, sess.userID)
 
 	case "/help":
 		b.api.sendMessage(ctx, chatID, helpText, nil) //nolint:errcheck
@@ -210,6 +228,92 @@ func (b *BotServer) handleStatus(ctx context.Context, chatID int64, userID, jobI
 		sb.WriteString("\n\n")
 	}
 	b.api.sendMessage(ctx, chatID, sb.String(), nil) //nolint:errcheck
+}
+
+func (b *BotServer) handleJobs(ctx context.Context, chatID int64, userID string) {
+	if userID == "" {
+		b.api.sendMessage(ctx, chatID, "Use /new to start a job first.", nil) //nolint:errcheck
+		return
+	}
+	jobs, err := b.cfg.JobSvc.ListJobs(ctx, userID, 20)
+	if err != nil {
+		b.api.sendMessage(ctx, chatID, "Failed to retrieve jobs.", nil) //nolint:errcheck
+		return
+	}
+
+	var completed []domain.Job
+	for _, j := range jobs {
+		if j.Status == domain.StatusCompleted {
+			completed = append(completed, j)
+		}
+	}
+	if len(completed) == 0 {
+		b.api.sendMessage(ctx, chatID, "No completed jobs found.", nil) //nolint:errcheck
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("<b>Completed jobs (%d):</b>\n\n", len(completed)))
+	for _, j := range completed {
+		completedAt := ""
+		if j.CompletedAt != nil {
+			completedAt = j.CompletedAt.Format("2006-01-02 15:04")
+		}
+		sb.WriteString(fmt.Sprintf("<code>%s</code>  %s\n%s | provider: %s\n\n",
+			j.ID[:8], completedAt, j.AudioName, j.Config.TTSProvider))
+	}
+	b.api.sendMessage(ctx, chatID, sb.String(), nil) //nolint:errcheck
+}
+
+func (b *BotServer) handleBind(ctx context.Context, chatID int64, tgUserID int64, currentUserID, args string) {
+	if b.cfg.AuthSvc == nil {
+		b.api.sendMessage(ctx, chatID, "Account binding is not available.", nil) //nolint:errcheck
+		return
+	}
+
+	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		b.api.sendMessage(ctx, chatID, //nolint:errcheck
+			"Usage: <code>/bind username password</code>\n\nLinks your Telegram account to an existing account.", nil)
+		return
+	}
+	username, password := parts[0], parts[1]
+
+	sess, err := b.cfg.AuthSvc.Login(ctx, username, password)
+	if err != nil {
+		b.api.sendMessage(ctx, chatID, "Invalid username or password.", nil) //nolint:errcheck
+		return
+	}
+	// Clean up the session immediately — we only needed it to validate credentials.
+	b.cfg.AuthSvc.Logout(ctx, sess.Token) //nolint:errcheck
+
+	binding := domain.TelegramBinding{
+		TelegramID: tgUserID,
+		UserID:     sess.UserID,
+		BoundAt:    time.Now(),
+	}
+	if err := b.cfg.BindingRepo.Save(ctx, binding); err != nil {
+		log.Printf("tgbot: save binding for tg %d: %v", tgUserID, err)
+		b.api.sendMessage(ctx, chatID, "Failed to save binding, please try again.", nil) //nolint:errcheck
+		return
+	}
+
+	b.api.sendMessage(ctx, chatID, //nolint:errcheck
+		fmt.Sprintf("✅ Account bound to <b>%s</b>.\n\nYour Telegram account will now use this account's job history and quota.", username), nil)
+}
+
+func (b *BotServer) handleUnbind(ctx context.Context, chatID int64, tgUserID int64, userID string) {
+	_, err := b.cfg.BindingRepo.FindByTelegramID(ctx, tgUserID)
+	if err != nil {
+		b.api.sendMessage(ctx, chatID, "No account binding found.", nil) //nolint:errcheck
+		return
+	}
+	if err := b.cfg.BindingRepo.DeleteByTelegramID(ctx, tgUserID); err != nil {
+		log.Printf("tgbot: delete binding for tg %d: %v", tgUserID, err)
+		b.api.sendMessage(ctx, chatID, "Failed to remove binding, please try again.", nil) //nolint:errcheck
+		return
+	}
+	b.api.sendMessage(ctx, chatID, "✅ Account binding removed. Your Telegram account now uses its own dedicated account.", nil) //nolint:errcheck
 }
 
 func formatJob(j domain.Job) string {
@@ -361,7 +465,7 @@ func (b *BotServer) handleCallback(ctx context.Context, cq *CallbackQuery) {
 
 	b.api.answerCallbackQuery(ctx, cq.ID, "") //nolint:errcheck
 
-	user, err := findOrCreateUser(ctx, cq.From.ID, b.cfg.UserRepo, b.cfg.IDFunc)
+	user, err := findOrCreateUser(ctx, cq.From.ID, b.cfg.UserRepo, b.cfg.BindingRepo, b.cfg.IDFunc)
 	if err != nil {
 		log.Printf("tgbot: find/create user in callback %d: %v", cq.From.ID, err)
 		return
