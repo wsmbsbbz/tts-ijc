@@ -32,6 +32,7 @@ type BotConfig struct {
 	IDFunc           func() string
 	AllowedProviders string // comma-separated list, e.g. "edge,gtts"
 	UploadLimit      int64
+	DownloadLimit    int64
 }
 
 // BotServer runs the Telegram bot update loop alongside the HTTP server.
@@ -63,8 +64,9 @@ func NewBotServer(cfg BotConfig) *BotServer {
 // botCommands is the slash-command list registered with Telegram on startup.
 var botCommands = []BotCommand{
 	{Command: "new", Description: "Start a new translation job"},
-	{Command: "jobs", Description: "List completed jobs"},
+	{Command: "jobs", Description: "List completed jobs (with download)"},
 	{Command: "status", Description: "Show recent jobs (all statuses)"},
+	{Command: "me", Description: "Show account info and quota"},
 	{Command: "bind", Description: "Bind to an existing account"},
 	{Command: "unbind", Description: "Remove account binding"},
 	{Command: "cancel", Description: "Cancel the current operation"},
@@ -148,8 +150,9 @@ Convert VTT subtitles to speech and mix them into audio.
 
 <b>Commands:</b>
 /new — Start a new translation job
-/jobs — List your completed jobs
-/status — Show your recent jobs (all statuses)
+/jobs — List completed jobs (tap to download)
+/status — Show recent jobs (all statuses)
+/me — Show account info and quota usage
 /bind — Bind your Telegram account to an existing account
 /unbind — Remove account binding
 /cancel — Cancel the current operation
@@ -160,6 +163,10 @@ Convert VTT subtitles to speech and mix them into audio.
 2. Send your WebVTT subtitle file (.vtt, max 20 MB)
 3. Choose TTS provider and settings
 4. Confirm — I'll notify you when done
+
+<b>Download completed jobs:</b>
+Use /jobs to see completed jobs with download buttons.
+Use /status &lt;job_id&gt; to view a specific job and download it.
 
 <b>Account binding:</b>
 Use /bind to link your Telegram to an existing account.
@@ -205,6 +212,9 @@ func (b *BotServer) handleCommand(ctx context.Context, chatID int64, sess *sessi
 	case "/unbind":
 		b.handleUnbind(ctx, chatID, tgUserID, sess.userID)
 
+	case "/me":
+		b.handleMe(ctx, chatID, sess.userID)
+
 	case "/help":
 		b.api.sendMessage(ctx, chatID, helpText, nil) //nolint:errcheck
 
@@ -225,7 +235,15 @@ func (b *BotServer) handleStatus(ctx context.Context, chatID int64, userID, jobI
 			b.api.sendMessage(ctx, chatID, "Job not found.", nil) //nolint:errcheck
 			return
 		}
-		b.api.sendMessage(ctx, chatID, formatJob(job), nil) //nolint:errcheck
+		var kb *InlineKeyboardMarkup
+		if job.Status == domain.StatusCompleted && job.OutputKey != "" {
+			kb = &InlineKeyboardMarkup{
+				InlineKeyboard: [][]InlineKeyboardButton{
+					{{Text: "📥 Download", CallbackData: "dl:" + job.ID}},
+				},
+			}
+		}
+		b.api.sendMessage(ctx, chatID, formatJob(job), kb) //nolint:errcheck
 		return
 	}
 
@@ -237,11 +255,21 @@ func (b *BotServer) handleStatus(ctx context.Context, chatID int64, userID, jobI
 
 	var sb strings.Builder
 	sb.WriteString("<b>Your recent jobs:</b>\n\n")
+	var dlRows [][]InlineKeyboardButton
 	for _, j := range jobs {
 		sb.WriteString(formatJob(j))
 		sb.WriteString("\n\n")
+		if j.Status == domain.StatusCompleted && j.OutputKey != "" {
+			dlRows = append(dlRows, []InlineKeyboardButton{
+				{Text: fmt.Sprintf("📥 %s", j.AudioName), CallbackData: "dl:" + j.ID},
+			})
+		}
 	}
-	b.api.sendMessage(ctx, chatID, sb.String(), nil) //nolint:errcheck
+	var kb *InlineKeyboardMarkup
+	if len(dlRows) > 0 {
+		kb = &InlineKeyboardMarkup{InlineKeyboard: dlRows}
+	}
+	b.api.sendMessage(ctx, chatID, sb.String(), kb) //nolint:errcheck
 }
 
 func (b *BotServer) handleJobs(ctx context.Context, chatID int64, userID string) {
@@ -267,16 +295,24 @@ func (b *BotServer) handleJobs(ctx context.Context, chatID int64, userID string)
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("<b>Completed jobs (%d):</b>\n\n", len(completed)))
+	sb.WriteString(fmt.Sprintf("<b>Completed jobs (%d):</b>\n", len(completed)))
+
+	var rows [][]InlineKeyboardButton
 	for _, j := range completed {
 		completedAt := ""
 		if j.CompletedAt != nil {
 			completedAt = j.CompletedAt.Format("2006-01-02 15:04")
 		}
-		sb.WriteString(fmt.Sprintf("<code>%s</code>  %s\n%s | provider: %s\n\n",
+		sb.WriteString(fmt.Sprintf("\n<code>%s</code>  %s\n%s | provider: %s\n",
 			j.ID[:8], completedAt, j.AudioName, j.Config.TTSProvider))
+
+		rows = append(rows, []InlineKeyboardButton{
+			{Text: fmt.Sprintf("📥 %s", j.AudioName), CallbackData: "dl:" + j.ID},
+		})
 	}
-	b.api.sendMessage(ctx, chatID, sb.String(), nil) //nolint:errcheck
+
+	kb := &InlineKeyboardMarkup{InlineKeyboard: rows}
+	b.api.sendMessage(ctx, chatID, sb.String(), kb) //nolint:errcheck
 }
 
 func (b *BotServer) handleBind(ctx context.Context, chatID int64, tgUserID int64, currentUserID, args string) {
@@ -328,6 +364,93 @@ func (b *BotServer) handleUnbind(ctx context.Context, chatID int64, tgUserID int
 		return
 	}
 	b.api.sendMessage(ctx, chatID, "✅ Account binding removed. Your Telegram account now uses its own dedicated account.", nil) //nolint:errcheck
+}
+
+func (b *BotServer) handleDownloadCallback(ctx context.Context, chatID int64, userID, jobID string) {
+	if userID == "" {
+		b.api.sendMessage(ctx, chatID, "Use /new to start a job first.", nil) //nolint:errcheck
+		return
+	}
+
+	job, err := b.cfg.JobSvc.GetJob(ctx, jobID)
+	if err != nil || job.UserID != userID {
+		b.api.sendMessage(ctx, chatID, "Job not found.", nil) //nolint:errcheck
+		return
+	}
+
+	if job.Status != domain.StatusCompleted || job.OutputKey == "" {
+		b.api.sendMessage(ctx, chatID, "Job output is not ready yet.", nil) //nolint:errcheck
+		return
+	}
+
+	// Check download quota.
+	if job.OutputSize > 0 && b.cfg.DownloadLimit > 0 {
+		user, err := b.cfg.UserRepo.FindByID(ctx, userID)
+		if err == nil && user.TotalBytesDownloaded+job.OutputSize > b.cfg.DownloadLimit {
+			b.api.sendMessage(ctx, chatID, "Download quota exceeded.", nil) //nolint:errcheck
+			return
+		}
+	}
+
+	ext := path.Ext(job.AudioName)
+	base := job.AudioName[:len(job.AudioName)-len(ext)]
+	outputName := base + "_translated.mp3"
+
+	url, err := b.cfg.Storage.GenerateDownloadURL(ctx, job.OutputKey, downloadURLExpiry, outputName)
+	if err != nil {
+		log.Printf("tgbot: generate download url for job %s: %v", job.ID, err)
+		b.api.sendMessage(ctx, chatID, "Failed to generate download link.", nil) //nolint:errcheck
+		return
+	}
+
+	// Increment download counter.
+	if job.OutputSize > 0 {
+		b.cfg.UserRepo.IncrementDownloadBytes(ctx, userID, job.OutputSize) //nolint:errcheck
+	}
+
+	if job.OutputSize > 0 && job.OutputSize <= maxTGSendSize {
+		caption := fmt.Sprintf("📥 <b>%s</b>", outputName)
+		if err := b.api.sendDocument(ctx, chatID, url, caption); err != nil {
+			log.Printf("tgbot: send document: %v", err)
+			b.api.sendMessage(ctx, chatID, fmt.Sprintf("📥 Download (24 h):\n%s", url), nil) //nolint:errcheck
+		}
+		return
+	}
+
+	sizeMB := float64(job.OutputSize) / (1024 * 1024)
+	b.api.sendMessage(ctx, chatID, //nolint:errcheck
+		fmt.Sprintf("📥 File is %.1f MB (Telegram limit 50 MB).\nDownload link (24 h):\n%s", sizeMB, url), nil)
+}
+
+func (b *BotServer) handleMe(ctx context.Context, chatID int64, userID string) {
+	if userID == "" {
+		b.api.sendMessage(ctx, chatID, "Use /new to start a job first.", nil) //nolint:errcheck
+		return
+	}
+
+	user, err := b.cfg.UserRepo.FindByID(ctx, userID)
+	if err != nil {
+		b.api.sendMessage(ctx, chatID, "Failed to retrieve account info.", nil) //nolint:errcheck
+		return
+	}
+
+	uploadUsed := float64(user.TotalBytesUploaded) / (1024 * 1024)
+	uploadLimit := float64(b.cfg.UploadLimit) / (1024 * 1024)
+	downloadUsed := float64(user.TotalBytesDownloaded) / (1024 * 1024)
+	downloadLimit := float64(b.cfg.DownloadLimit) / (1024 * 1024)
+
+	msg := fmt.Sprintf(
+		"<b>Account Info</b>\n\n"+
+			"Username: <code>%s</code>\n"+
+			"Upload:   %.1f / %.1f MB\n"+
+			"Download: %.1f / %.1f MB\n"+
+			"Expires:  %s",
+		user.Username,
+		uploadUsed, uploadLimit,
+		downloadUsed, downloadLimit,
+		user.ExpiresAt.Format("2006-01-02 15:04"),
+	)
+	b.api.sendMessage(ctx, chatID, msg, nil) //nolint:errcheck
 }
 
 func formatJob(j domain.Job) string {
@@ -496,6 +619,8 @@ func (b *BotServer) handleCallback(ctx context.Context, cq *CallbackQuery) {
 		b.handleVolumeCallback(ctx, chatID, sess, strings.TrimPrefix(data, "volume:"))
 	case strings.HasPrefix(data, "speedup:"):
 		b.handleSpeedupCallback(ctx, chatID, sess, strings.TrimPrefix(data, "speedup:"))
+	case strings.HasPrefix(data, "dl:"):
+		b.handleDownloadCallback(ctx, chatID, sess.userID, strings.TrimPrefix(data, "dl:"))
 	case data == "confirm":
 		b.handleConfirm(ctx, chatID, sess)
 	case data == "cancel_job":
