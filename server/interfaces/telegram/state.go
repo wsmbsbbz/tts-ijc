@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/wsmbsbbz/tts-ijc/server/domain"
+	"github.com/wsmbsbbz/tts-ijc/server/infrastructure/asmrone"
 )
 
 type convState int
@@ -14,6 +15,10 @@ const (
 	stateWaitingVTT
 	stateWaitingConfig
 	stateConfirming
+	// RJ workflow states
+	stateRJWaitingID  // user sent /rj, waiting for RJ number input
+	stateRJBrowse     // browsing file tree, multi-selecting audio files
+	stateRJSelectVTT  // single-selecting a VTT file
 )
 
 // configStep constants track sub-steps within stateWaitingConfig.
@@ -23,10 +28,17 @@ const (
 	configStepSpeedup  = 2
 )
 
+// dirLevel is one level of the folder navigation stack.
+type dirLevel struct {
+	title  string          // folder title (for breadcrumb display)
+	tracks []asmrone.Track // items in this folder
+}
+
 type session struct {
-	state       convState
-	configStep  int
-	userID      string // domain.User.ID
+	state      convState
+	configStep int
+	userID     string // domain.User.ID
+	// Upload-based workflow
 	audioFileID string
 	audioName   string
 	audioSize   int64
@@ -34,6 +46,19 @@ type session struct {
 	vttName     string
 	vttSize     int64
 	cfg         domain.JobConfig
+	// RJ workflow
+	rjMode        bool            // true when job originates from asmr.one
+	rjWorkno      string          // e.g. "RJ299717"
+	rjWorkTitle   string          // human-readable title
+	rjAsmrToken   string          // JWT token used for this session
+	rjPath        []string        // folder breadcrumb titles
+	rjDirStack    []dirLevel      // parent folders (for Back navigation)
+	rjCurrentDir  []asmrone.Track // items in current view
+	rjSelectedURLs map[string]asmrone.Track // selected audio: URL → Track
+	rjAudioFiles  []asmrone.Track // finalised audio selection (after Done)
+	rjAllVTTs     []asmrone.Track // flattened VTT list from entire tree
+	rjVTT         *asmrone.Track  // selected VTT file
+	rjMenuMsgID   int             // message ID of the current selection keyboard
 }
 
 type stateStore struct {

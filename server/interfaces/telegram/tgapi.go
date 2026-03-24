@@ -224,6 +224,42 @@ type BotCommand struct {
 	Description string `json:"description"`
 }
 
+// editMessageText edits the text (and optionally the keyboard) of an existing message.
+func (a *tgAPI) editMessageText(ctx context.Context, chatID int64, messageID int, text string, keyboard *InlineKeyboardMarkup) error {
+	payload := map[string]any{
+		"chat_id":    chatID,
+		"message_id": messageID,
+		"text":       text,
+		"parse_mode": "HTML",
+	}
+	if keyboard != nil {
+		payload["reply_markup"] = keyboard
+	}
+	_, err := a.call(ctx, "editMessageText", payload)
+	return err
+}
+
+// sendMessageGetID sends a message and returns the resulting message ID.
+func (a *tgAPI) sendMessageGetID(ctx context.Context, chatID int64, text string, keyboard *InlineKeyboardMarkup) (int, error) {
+	payload := map[string]any{
+		"chat_id":    chatID,
+		"text":       text,
+		"parse_mode": "HTML",
+	}
+	if keyboard != nil {
+		payload["reply_markup"] = keyboard
+	}
+	result, err := a.call(ctx, "sendMessage", payload)
+	if err != nil {
+		return 0, err
+	}
+	var msg Message
+	if err := json.Unmarshal(result, &msg); err != nil {
+		return 0, fmt.Errorf("parse sent message: %w", err)
+	}
+	return msg.MessageID, nil
+}
+
 // setMyCommands registers the bot's command list with Telegram so users see
 // slash-command suggestions when they type "/".
 func (a *tgAPI) setMyCommands(ctx context.Context, commands []BotCommand) error {

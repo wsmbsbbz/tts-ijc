@@ -20,21 +20,27 @@ func NewPostgresTelegramBindingRepo(db *sql.DB) (*PostgresTelegramBindingRepo, e
 		CREATE TABLE IF NOT EXISTS telegram_bindings (
 			telegram_id BIGINT PRIMARY KEY,
 			user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-			bound_at    TIMESTAMPTZ NOT NULL
+			bound_at    TIMESTAMPTZ NOT NULL,
+			asmr_token  TEXT NOT NULL DEFAULT ''
 		);
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("create telegram_bindings table: %w", err)
 	}
+	// Migrate existing tables that may not have the asmr_token column.
+	db.Exec(`ALTER TABLE telegram_bindings ADD COLUMN IF NOT EXISTS asmr_token TEXT NOT NULL DEFAULT ''`) //nolint:errcheck
 	return &PostgresTelegramBindingRepo{db: db}, nil
 }
 
 func (r *PostgresTelegramBindingRepo) Save(ctx context.Context, b domain.TelegramBinding) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO telegram_bindings (telegram_id, user_id, bound_at)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (telegram_id) DO UPDATE SET user_id = excluded.user_id, bound_at = excluded.bound_at
-	`, b.TelegramID, b.UserID, b.BoundAt)
+		INSERT INTO telegram_bindings (telegram_id, user_id, bound_at, asmr_token)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (telegram_id) DO UPDATE SET
+			user_id    = excluded.user_id,
+			bound_at   = excluded.bound_at,
+			asmr_token = excluded.asmr_token
+	`, b.TelegramID, b.UserID, b.BoundAt, b.AsmrToken)
 	if err != nil {
 		return fmt.Errorf("upsert telegram binding: %w", err)
 	}
@@ -44,8 +50,8 @@ func (r *PostgresTelegramBindingRepo) Save(ctx context.Context, b domain.Telegra
 func (r *PostgresTelegramBindingRepo) FindByTelegramID(ctx context.Context, tgID int64) (domain.TelegramBinding, error) {
 	var b domain.TelegramBinding
 	err := r.db.QueryRowContext(ctx, `
-		SELECT telegram_id, user_id, bound_at FROM telegram_bindings WHERE telegram_id = $1
-	`, tgID).Scan(&b.TelegramID, &b.UserID, &b.BoundAt)
+		SELECT telegram_id, user_id, bound_at, asmr_token FROM telegram_bindings WHERE telegram_id = $1
+	`, tgID).Scan(&b.TelegramID, &b.UserID, &b.BoundAt, &b.AsmrToken)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return domain.TelegramBinding{}, domain.ErrTelegramBindingNotFound
@@ -63,3 +69,12 @@ func (r *PostgresTelegramBindingRepo) DeleteByTelegramID(ctx context.Context, tg
 	return nil
 }
 
+func (r *PostgresTelegramBindingRepo) SaveAsmrToken(ctx context.Context, tgID int64, token string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE telegram_bindings SET asmr_token = $1 WHERE telegram_id = $2
+	`, token, tgID)
+	if err != nil {
+		return fmt.Errorf("save asmr token: %w", err)
+	}
+	return nil
+}

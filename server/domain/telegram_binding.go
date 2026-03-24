@@ -14,6 +14,7 @@ type TelegramBinding struct {
 	TelegramID int64
 	UserID     string
 	BoundAt    time.Time
+	AsmrToken  string // JWT token for asmr.one API (empty if not bound)
 }
 
 // TelegramBindingRepository persists Telegram account bindings.
@@ -21,4 +22,5 @@ type TelegramBindingRepository interface {
 	Save(ctx context.Context, b TelegramBinding) error
 	FindByTelegramID(ctx context.Context, tgID int64) (TelegramBinding, error)
 	DeleteByTelegramID(ctx context.Context, tgID int64) error
+	SaveAsmrToken(ctx context.Context, tgID int64, token string) error
 }

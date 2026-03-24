@@ -63,7 +63,10 @@ func NewBotServer(cfg BotConfig) *BotServer {
 
 // botCommands is the slash-command list registered with Telegram on startup.
 var botCommands = []BotCommand{
-	{Command: "new", Description: "Start a new translation job"},
+	{Command: "new", Description: "Start a new translation job (upload files)"},
+	{Command: "rj", Description: "Start a job from asmr.one by RJ number"},
+	{Command: "asmr_bind", Description: "Save your asmr.one JWT token"},
+	{Command: "asmr_unbind", Description: "Remove your asmr.one token"},
 	{Command: "jobs", Description: "List completed jobs (with download)"},
 	{Command: "status", Description: "Show recent jobs (all statuses)"},
 	{Command: "me", Description: "Show account info and quota"},
@@ -149,7 +152,10 @@ const helpText = `<b>Translation Combinator Bot</b>
 Convert VTT subtitles to speech and mix them into audio.
 
 <b>Commands:</b>
-/new — Start a new translation job
+/new — Start a new translation job (upload files)
+/rj &lt;RJxxxxxx&gt; — Start a job from asmr.one by RJ number
+/asmr_bind &lt;token&gt; — Save your asmr.one JWT token
+/asmr_unbind — Remove your asmr.one token
 /jobs — List completed jobs (tap to download)
 /status — Show recent jobs (all statuses)
 /me — Show account info and quota usage
@@ -158,19 +164,20 @@ Convert VTT subtitles to speech and mix them into audio.
 /cancel — Cancel the current operation
 /help — Show this message
 
-<b>How it works:</b>
+<b>Upload workflow (/new):</b>
 1. /new → send your audio file (MP3/WAV/OGG/M4A, max 20 MB)
 2. Send your WebVTT subtitle file (.vtt, max 20 MB)
 3. Choose TTS provider and settings
 4. Confirm — I'll notify you when done
 
+<b>asmr.one workflow (/rj):</b>
+1. /asmr_bind &lt;token&gt; — bind your asmr.one JWT once
+2. /rj RJxxxxxx — browse files, select audio + subtitle
+3. Confirm — server downloads and processes directly
+
 <b>Download completed jobs:</b>
 Use /jobs to see completed jobs with download buttons.
-Use /status &lt;job_id&gt; to view a specific job and download it.
-
-<b>Account binding:</b>
-Use /bind to link your Telegram to an existing account.
-Your job history and quota will then be shared with that account.`
+Use /status &lt;job_id&gt; to view a specific job and download it.`
 
 func (b *BotServer) handleCommand(ctx context.Context, chatID int64, sess *session, tgUserID int64, text string) {
 	parts := strings.Fields(text)
@@ -214,6 +221,19 @@ func (b *BotServer) handleCommand(ctx context.Context, chatID int64, sess *sessi
 
 	case "/me":
 		b.handleMe(ctx, chatID, sess.userID)
+
+	case "/rj":
+		b.store.reset(chatID)
+		fresh := b.store.get(chatID)
+		fresh.userID = sess.userID
+		b.store.set(chatID, fresh)
+		b.handleRJ(ctx, chatID, fresh, tgUserID, strings.ToUpper(strings.TrimSpace(args)))
+
+	case "/asmr_bind":
+		b.handleAsmrBind(ctx, chatID, tgUserID, args)
+
+	case "/asmr_unbind":
+		b.handleAsmrUnbind(ctx, chatID, tgUserID)
 
 	case "/help":
 		b.api.sendMessage(ctx, chatID, helpText, nil) //nolint:errcheck
@@ -577,6 +597,10 @@ func (b *BotServer) handleVTTUpload(ctx context.Context, chatID int64, sess *ses
 // --- Text input handler ---
 
 func (b *BotServer) handleText(ctx context.Context, chatID int64, sess *session, text string) {
+	if sess.state == stateRJWaitingID {
+		b.handleRJIDInput(ctx, chatID, sess, text)
+		return
+	}
 	if sess.state == stateWaitingConfig && sess.configStep == configStepVolume {
 		vol, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
 		if err != nil || vol < 0 || vol > 1 {
@@ -589,7 +613,7 @@ func (b *BotServer) handleText(ctx context.Context, chatID int64, sess *session,
 		b.api.sendMessage(ctx, chatID, "Enable speech acceleration?", b.speedupKeyboard()) //nolint:errcheck
 		return
 	}
-	b.api.sendMessage(ctx, chatID, "Use /new to start a job or /help for help.", nil) //nolint:errcheck
+	b.api.sendMessage(ctx, chatID, "Use /new or /rj to start a job, or /help for help.", nil) //nolint:errcheck
 }
 
 // --- Callback query handler ---
@@ -625,7 +649,18 @@ func (b *BotServer) handleCallback(ctx context.Context, cq *CallbackQuery) {
 		b.handleConfirm(ctx, chatID, sess)
 	case data == "cancel_job":
 		b.store.reset(chatID)
-		b.api.sendMessage(ctx, chatID, "Cancelled. Use /new to start again.", nil) //nolint:errcheck
+		b.api.sendMessage(ctx, chatID, "Cancelled. Use /new or /rj to start again.", nil) //nolint:errcheck
+	// RJ workflow callbacks
+	case strings.HasPrefix(data, "rj:t:"):
+		b.handleRJToggle(ctx, chatID, sess, strings.TrimPrefix(data, "rj:t:"))
+	case strings.HasPrefix(data, "rj:e:"):
+		b.handleRJEnter(ctx, chatID, sess, strings.TrimPrefix(data, "rj:e:"))
+	case data == "rj:back":
+		b.handleRJBack(ctx, chatID, sess)
+	case data == "rj:done":
+		b.handleRJDoneAudio(ctx, chatID, sess)
+	case strings.HasPrefix(data, "rj:v:"):
+		b.handleRJSelectVTTCallback(ctx, chatID, sess, strings.TrimPrefix(data, "rj:v:"))
 	}
 }
 
@@ -699,6 +734,10 @@ func (b *BotServer) handleSpeedupCallback(ctx context.Context, chatID int64, ses
 // creates the job, and launches the progress notifier — all in a goroutine.
 func (b *BotServer) handleConfirm(ctx context.Context, chatID int64, sess *session) {
 	if sess.state != stateConfirming {
+		return
+	}
+	if sess.rjMode {
+		b.handleRJConfirm(ctx, chatID, sess)
 		return
 	}
 
