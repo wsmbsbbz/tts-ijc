@@ -69,10 +69,20 @@ func (r *PostgresTelegramBindingRepo) DeleteByTelegramID(ctx context.Context, tg
 	return nil
 }
 
-func (r *PostgresTelegramBindingRepo) SaveAsmrToken(ctx context.Context, tgID int64, token string) error {
+func (r *PostgresTelegramBindingRepo) ClearAsmrToken(ctx context.Context, tgID int64) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE telegram_bindings SET asmr_token = '' WHERE telegram_id = $1`, tgID)
+	if err != nil {
+		return fmt.Errorf("clear asmr token: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresTelegramBindingRepo) SaveAsmrToken(ctx context.Context, tgID int64, userID, token string) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE telegram_bindings SET asmr_token = $1 WHERE telegram_id = $2
-	`, token, tgID)
+		INSERT INTO telegram_bindings (telegram_id, user_id, bound_at, asmr_token)
+		VALUES ($1, $2, NOW(), $3)
+		ON CONFLICT (telegram_id) DO UPDATE SET asmr_token = excluded.asmr_token
+	`, tgID, userID, token)
 	if err != nil {
 		return fmt.Errorf("save asmr token: %w", err)
 	}

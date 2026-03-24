@@ -18,7 +18,7 @@ import (
 var rjPattern = regexp.MustCompile(`(?i)^RJ\d+$`)
 
 // handleAsmrBind saves the user's asmr.one JWT token.
-func (b *BotServer) handleAsmrBind(ctx context.Context, chatID int64, tgUserID int64, token string) {
+func (b *BotServer) handleAsmrBind(ctx context.Context, chatID int64, tgUserID int64, userID, token string) {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		b.api.sendMessage(ctx, chatID, //nolint:errcheck
@@ -27,7 +27,7 @@ func (b *BotServer) handleAsmrBind(ctx context.Context, chatID int64, tgUserID i
 				"The token is valid for ~1 year.", nil)
 		return
 	}
-	if err := b.cfg.BindingRepo.SaveAsmrToken(ctx, tgUserID, token); err != nil {
+	if err := b.cfg.BindingRepo.SaveAsmrToken(ctx, tgUserID, userID, token); err != nil {
 		log.Printf("tgbot: save asmr token for tg %d: %v", tgUserID, err)
 		b.api.sendMessage(ctx, chatID, "❌ Failed to save token, please try again.", nil) //nolint:errcheck
 		return
@@ -38,7 +38,7 @@ func (b *BotServer) handleAsmrBind(ctx context.Context, chatID int64, tgUserID i
 
 // handleAsmrUnbind removes the user's stored asmr.one JWT token.
 func (b *BotServer) handleAsmrUnbind(ctx context.Context, chatID int64, tgUserID int64) {
-	if err := b.cfg.BindingRepo.SaveAsmrToken(ctx, tgUserID, ""); err != nil {
+	if err := b.cfg.BindingRepo.ClearAsmrToken(ctx, tgUserID); err != nil {
 		b.api.sendMessage(ctx, chatID, "❌ Failed to remove token, please try again.", nil) //nolint:errcheck
 		return
 	}

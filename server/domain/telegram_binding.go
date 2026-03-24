@@ -22,5 +22,10 @@ type TelegramBindingRepository interface {
 	Save(ctx context.Context, b TelegramBinding) error
 	FindByTelegramID(ctx context.Context, tgID int64) (TelegramBinding, error)
 	DeleteByTelegramID(ctx context.Context, tgID int64) error
-	SaveAsmrToken(ctx context.Context, tgID int64, token string) error
+	// SaveAsmrToken upserts the asmr.one JWT for the given Telegram user.
+	// userID is required for the insert path when no binding row exists yet.
+	SaveAsmrToken(ctx context.Context, tgID int64, userID, token string) error
+	// ClearAsmrToken removes the stored asmr.one token for the given Telegram user.
+	// It is a no-op if no binding exists.
+	ClearAsmrToken(ctx context.Context, tgID int64) error
 }

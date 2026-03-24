@@ -230,7 +230,7 @@ func (b *BotServer) handleCommand(ctx context.Context, chatID int64, sess *sessi
 		b.handleRJ(ctx, chatID, fresh, tgUserID, strings.ToUpper(strings.TrimSpace(args)))
 
 	case "/asmr_bind":
-		b.handleAsmrBind(ctx, chatID, tgUserID, args)
+		b.handleAsmrBind(ctx, chatID, tgUserID, sess.userID, args)
 
 	case "/asmr_unbind":
 		b.handleAsmrUnbind(ctx, chatID, tgUserID)

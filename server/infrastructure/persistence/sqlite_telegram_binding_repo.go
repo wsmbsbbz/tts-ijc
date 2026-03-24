@@ -73,10 +73,20 @@ func (r *SQLiteTelegramBindingRepo) DeleteByTelegramID(ctx context.Context, tgID
 	return err
 }
 
-func (r *SQLiteTelegramBindingRepo) SaveAsmrToken(ctx context.Context, tgID int64, token string) error {
+func (r *SQLiteTelegramBindingRepo) ClearAsmrToken(ctx context.Context, tgID int64) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE telegram_bindings SET asmr_token = '' WHERE telegram_id = ?`, tgID)
+	if err != nil {
+		return fmt.Errorf("clear asmr token: %w", err)
+	}
+	return nil
+}
+
+func (r *SQLiteTelegramBindingRepo) SaveAsmrToken(ctx context.Context, tgID int64, userID, token string) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE telegram_bindings SET asmr_token = ? WHERE telegram_id = ?
-	`, token, tgID)
+		INSERT INTO telegram_bindings (telegram_id, user_id, bound_at, asmr_token)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(telegram_id) DO UPDATE SET asmr_token = excluded.asmr_token
+	`, tgID, userID, time.Now().Format(time.RFC3339), token)
 	if err != nil {
 		return fmt.Errorf("save asmr token: %w", err)
 	}
