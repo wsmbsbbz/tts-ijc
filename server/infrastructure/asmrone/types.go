@@ -4,10 +4,11 @@ import "strings"
 
 // WorkInfo contains metadata for an asmr.one work.
 type WorkInfo struct {
-	ID       int    `json:"id"`
-	Title    string `json:"title"`
-	Name     string `json:"name"`      // circle/creator name
-	SourceID string `json:"source_id"` // e.g. "RJ299717"
+	ID          int    `json:"id"`
+	Title       string `json:"title"`
+	Name        string `json:"name"`         // circle/creator name
+	SourceID    string `json:"source_id"`    // e.g. "RJ299717"
+	HasSubtitle bool   `json:"has_subtitle"` // true when the work ships .vtt files
 }
 
 // Track represents a file or folder in an asmr.one work's file tree.
@@ -44,25 +45,80 @@ func (t Track) IsFolder() bool {
 	return t.Type == "folder"
 }
 
-// FlattenVTTs returns all VTT tracks found anywhere in the tree (depth-first).
-func FlattenVTTs(tracks []Track) []Track {
-	var out []Track
-	for _, t := range tracks {
-		if t.IsVTT() {
-			out = append(out, t)
-		}
-		if t.IsFolder() {
-			out = append(out, FlattenVTTs(t.Children)...)
-		}
-	}
-	return out
-}
-
 // BrowseItems filters tracks to only folders and audio files (items shown in browse UI).
 func BrowseItems(tracks []Track) []Track {
 	var out []Track
 	for _, t := range tracks {
 		if t.IsFolder() || t.IsAudio() {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// AudioVTTPair bundles an audio track with its paired subtitle track.
+type AudioVTTPair struct {
+	Audio Track
+	VTT   Track
+}
+
+// FindVTTPeer returns the .vtt sibling whose name matches "<audio>.vtt",
+// or nil if none exists.
+func (t Track) FindVTTPeer(siblings []Track) *Track {
+	want := strings.ToLower(t.Title) + ".vtt"
+	for i, s := range siblings {
+		if strings.ToLower(s.Title) == want {
+			return &siblings[i]
+		}
+	}
+	return nil
+}
+
+// HasVTTPair reports whether this audio track has a sibling .vtt file whose
+// name matches "<track.Title>.vtt" (case-insensitive).
+func (t Track) HasVTTPair(siblings []Track) bool {
+	if !t.IsAudio() {
+		return false
+	}
+	return t.FindVTTPeer(siblings) != nil
+}
+
+// HasSubtitledAudio reports whether the track list contains at least one audio
+// file with a paired .vtt sibling, searching the whole subtree recursively.
+func HasSubtitledAudio(tracks []Track) bool {
+	for _, t := range tracks {
+		if t.IsAudio() && t.HasVTTPair(tracks) {
+			return true
+		}
+		if t.IsFolder() && HasSubtitledAudio(t.Children) {
+			return true
+		}
+	}
+	return false
+}
+
+// SubtitledBrowseItems returns the items that should appear in the browse UI
+// when subtitle-filtering is active:
+//   - folders that contain at least one subtitled audio anywhere in their subtree
+//   - audio files that have a matching .vtt sibling in the same directory
+func SubtitledBrowseItems(tracks []Track) []Track {
+	var out []Track
+	for _, t := range tracks {
+		if t.IsFolder() && HasSubtitledAudio(t.Children) {
+			out = append(out, t)
+		} else if t.IsAudio() && t.HasVTTPair(tracks) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// SubtitledAudioInDir returns all audio files in the given (flat) directory
+// that have a matching .vtt sibling – used by the "Select All" action.
+func SubtitledAudioInDir(tracks []Track) []Track {
+	var out []Track
+	for _, t := range tracks {
+		if t.IsAudio() && t.HasVTTPair(tracks) {
 			out = append(out, t)
 		}
 	}

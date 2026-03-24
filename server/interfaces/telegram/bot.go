@@ -659,8 +659,8 @@ func (b *BotServer) handleCallback(ctx context.Context, cq *CallbackQuery) {
 		b.handleRJBack(ctx, chatID, sess)
 	case data == "rj:done":
 		b.handleRJDoneAudio(ctx, chatID, sess)
-	case strings.HasPrefix(data, "rj:v:"):
-		b.handleRJSelectVTTCallback(ctx, chatID, sess, strings.TrimPrefix(data, "rj:v:"))
+	case data == "rj:all":
+		b.handleRJSelectAll(ctx, chatID, sess)
 	}
 }
 

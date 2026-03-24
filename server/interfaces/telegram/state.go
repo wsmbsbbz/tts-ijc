@@ -16,9 +16,8 @@ const (
 	stateWaitingConfig
 	stateConfirming
 	// RJ workflow states
-	stateRJWaitingID  // user sent /rj, waiting for RJ number input
-	stateRJBrowse     // browsing file tree, multi-selecting audio files
-	stateRJSelectVTT  // single-selecting a VTT file
+	stateRJWaitingID // user sent /rj, waiting for RJ number input
+	stateRJBrowse    // browsing file tree, multi-selecting audio files
 )
 
 // configStep constants track sub-steps within stateWaitingConfig.
@@ -53,12 +52,9 @@ type session struct {
 	rjAsmrToken   string          // JWT token used for this session
 	rjPath        []string        // folder breadcrumb titles
 	rjDirStack    []dirLevel      // parent folders (for Back navigation)
-	rjCurrentDir  []asmrone.Track // items in current view
-	rjSelectedURLs map[string]asmrone.Track // selected audio: URL → Track
-	rjAudioFiles  []asmrone.Track // finalised audio selection (after Done)
-	rjAllVTTs     []asmrone.Track // flattened VTT list from entire tree
-	rjVTT         *asmrone.Track  // selected VTT file
-	rjMenuMsgID   int             // message ID of the current selection keyboard
+	rjCurrentDir   []asmrone.Track                     // items in current view
+	rjSelectedURLs map[string]asmrone.AudioVTTPair     // selected audio: URL → AudioVTTPair
+	rjMenuMsgID    int                                 // message ID of the current selection keyboard
 }
 
 type stateStore struct {

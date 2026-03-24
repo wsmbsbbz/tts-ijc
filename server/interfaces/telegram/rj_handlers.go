@@ -90,6 +90,12 @@ func (b *BotServer) fetchAndStartRJBrowse(ctx context.Context, chatID int64, ses
 		b.store.reset(chatID)
 		return
 	}
+	if !info.HasSubtitle {
+		b.api.sendMessage(ctx, chatID, //nolint:errcheck
+			fmt.Sprintf("❌ <code>%s</code> does not have subtitle files and cannot be used for translation.", workno), nil)
+		b.store.reset(chatID)
+		return
+	}
 
 	tracks, err := client.GetTracks(ctx, workno)
 	if err != nil {
@@ -106,9 +112,7 @@ func (b *BotServer) fetchAndStartRJBrowse(ctx context.Context, chatID int64, ses
 	sess.rjPath = nil
 	sess.rjDirStack = nil
 	sess.rjCurrentDir = tracks
-	sess.rjSelectedURLs = make(map[string]asmrone.Track)
-	sess.rjAllVTTs = asmrone.FlattenVTTs(tracks)
-	sess.rjVTT = nil
+	sess.rjSelectedURLs = make(map[string]asmrone.AudioVTTPair)
 	b.store.set(chatID, sess)
 
 	text := b.rjBrowseText(sess)
@@ -135,19 +139,10 @@ func (b *BotServer) rjBrowseText(sess *session) string {
 		pathStr += " › " + p
 	}
 
-	vttCount := 0
-	for _, t := range sess.rjCurrentDir {
-		if t.IsVTT() {
-			vttCount++
-		}
-	}
-
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("<b>%s</b>\n<code>%s</code>\n\n", title, pathStr))
 	sb.WriteString("Tap 🎵 to toggle audio selection. Tap 📁 to open a folder.\n")
-	if vttCount > 0 {
-		sb.WriteString(fmt.Sprintf("<i>(%d subtitle file(s) in this folder – selected after audio)</i>\n", vttCount))
-	}
+	sb.WriteString("<i>(Only audio files with paired subtitles are shown.)</i>\n")
 	if n := len(sess.rjSelectedURLs); n > 0 {
 		sb.WriteString(fmt.Sprintf("\n<b>✅ Selected: %d audio file(s)</b>", n))
 	}
@@ -155,7 +150,7 @@ func (b *BotServer) rjBrowseText(sess *session) string {
 }
 
 func (b *BotServer) rjBrowseKeyboard(sess *session) *InlineKeyboardMarkup {
-	items := asmrone.BrowseItems(sess.rjCurrentDir)
+	items := asmrone.SubtitledBrowseItems(sess.rjCurrentDir)
 	var rows [][]InlineKeyboardButton
 
 	for i, t := range items {
@@ -180,6 +175,26 @@ func (b *BotServer) rjBrowseKeyboard(sess *session) *InlineKeyboardMarkup {
 			}
 		}
 		rows = append(rows, []InlineKeyboardButton{btn})
+	}
+
+	// "Select All" row – only shown when there is at least one subtitled audio in this dir.
+	dirAudios := asmrone.SubtitledAudioInDir(sess.rjCurrentDir)
+	if len(dirAudios) > 0 {
+		allSelected := true
+		for _, t := range dirAudios {
+			if _, ok := sess.rjSelectedURLs[t.MediaDownloadURL]; !ok {
+				allSelected = false
+				break
+			}
+		}
+		selectAllText := fmt.Sprintf("☑️ Select All (%d)", len(dirAudios))
+		if allSelected {
+			selectAllText = fmt.Sprintf("✅ Deselect All (%d)", len(dirAudios))
+		}
+		rows = append(rows, []InlineKeyboardButton{{
+			Text:         selectAllText,
+			CallbackData: "rj:all",
+		}})
 	}
 
 	// Navigation / action row.
@@ -225,7 +240,11 @@ func (b *BotServer) handleRJToggle(ctx context.Context, chatID int64, sess *sess
 	if _, ok := sess.rjSelectedURLs[track.MediaDownloadURL]; ok {
 		delete(sess.rjSelectedURLs, track.MediaDownloadURL)
 	} else {
-		sess.rjSelectedURLs[track.MediaDownloadURL] = track
+		vtt := track.FindVTTPeer(sess.rjCurrentDir)
+		if vtt == nil {
+			return
+		}
+		sess.rjSelectedURLs[track.MediaDownloadURL] = asmrone.AudioVTTPair{Audio: track, VTT: *vtt}
 	}
 	b.store.set(chatID, sess)
 	b.refreshRJBrowse(ctx, chatID, sess)
@@ -261,72 +280,15 @@ func (b *BotServer) handleRJBack(ctx context.Context, chatID int64, sess *sessio
 	b.refreshRJBrowse(ctx, chatID, sess)
 }
 
-// handleRJDoneAudio finalises audio selection and shows the VTT picker.
+// handleRJDoneAudio finalises audio selection and moves directly to config.
+// Each selected audio already has its paired VTT determined at selection time.
 func (b *BotServer) handleRJDoneAudio(ctx context.Context, chatID int64, sess *session) {
 	if sess.state != stateRJBrowse || len(sess.rjSelectedURLs) == 0 {
 		return
 	}
 
-	// Preserve insertion order by iterating over selectedURLs map.
-	sess.rjAudioFiles = make([]asmrone.Track, 0, len(sess.rjSelectedURLs))
-	for _, t := range sess.rjSelectedURLs {
-		sess.rjAudioFiles = append(sess.rjAudioFiles, t)
-	}
-
-	if len(sess.rjAllVTTs) == 0 {
-		b.api.sendMessage(ctx, chatID, //nolint:errcheck
-			"❌ No subtitle (.vtt) files found in this work.\n\n"+
-				"Use /new to upload your audio and VTT files manually.", nil)
-		b.store.reset(chatID)
-		return
-	}
-
-	sess.state = stateRJSelectVTT
-	b.store.set(chatID, sess)
-
-	b.api.sendMessage(ctx, chatID, b.rjVTTText(sess), b.rjVTTKeyboard(sess)) //nolint:errcheck
-}
-
-// rjVTTText builds the VTT selection message.
-func (b *BotServer) rjVTTText(sess *session) string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("<b>%s</b>\n\n", sess.rjWorkTitle))
-	sb.WriteString(fmt.Sprintf("Selected <b>%d</b> audio file(s).\n\n", len(sess.rjAudioFiles)))
-	sb.WriteString("Now select the subtitle file (.vtt) to apply to all selected audio:")
-	return sb.String()
-}
-
-// rjVTTKeyboard builds the VTT picker keyboard.
-func (b *BotServer) rjVTTKeyboard(sess *session) *InlineKeyboardMarkup {
-	var rows [][]InlineKeyboardButton
-	for i, t := range sess.rjAllVTTs {
-		sizeStr := ""
-		if t.FileSize > 0 {
-			sizeStr = fmt.Sprintf(" (%.1f KB)", float64(t.FileSize)/1024)
-		}
-		rows = append(rows, []InlineKeyboardButton{{
-			Text:         fmt.Sprintf("📄 %s%s", t.Title, sizeStr),
-			CallbackData: fmt.Sprintf("rj:v:%d", i),
-		}})
-	}
-	return &InlineKeyboardMarkup{InlineKeyboard: rows}
-}
-
-// handleRJSelectVTTCallback handles the user picking a VTT file and moves to config.
-func (b *BotServer) handleRJSelectVTTCallback(ctx context.Context, chatID int64, sess *session, idxStr string) {
-	if sess.state != stateRJSelectVTT {
-		return
-	}
-	var idx int
-	if _, err := fmt.Sscanf(idxStr, "%d", &idx); err != nil || idx < 0 || idx >= len(sess.rjAllVTTs) {
-		return
-	}
-	vtt := sess.rjAllVTTs[idx]
-	sess.rjVTT = &vtt
-
-	// Populate audioName / vttName for the existing config summary display.
-	sess.audioName = fmt.Sprintf("%d file(s) from %s", len(sess.rjAudioFiles), sess.rjWorkno)
-	sess.vttName = vtt.Title
+	sess.audioName = fmt.Sprintf("%d file(s) from %s", len(sess.rjSelectedURLs), sess.rjWorkno)
+	sess.vttName = "auto-paired"
 
 	sess.state = stateWaitingConfig
 	sess.configStep = configStepProvider
@@ -337,16 +299,52 @@ func (b *BotServer) handleRJSelectVTTCallback(ctx context.Context, chatID int64,
 	b.store.set(chatID, sess)
 
 	b.api.sendMessage(ctx, chatID, //nolint:errcheck
-		fmt.Sprintf("✅ Subtitle: <b>%s</b>\n\nSelect a TTS provider:", vtt.Title),
+		fmt.Sprintf("✅ Selected <b>%d</b> audio file(s) with paired subtitles.\n\nSelect a TTS provider:",
+			len(sess.rjSelectedURLs)),
 		b.providerKeyboard())
+}
+
+// handleRJSelectAll toggles selection of all subtitled audio files in the
+// current directory. If every file is already selected, they are all deselected.
+func (b *BotServer) handleRJSelectAll(ctx context.Context, chatID int64, sess *session) {
+	if sess.state != stateRJBrowse {
+		return
+	}
+	audios := asmrone.SubtitledAudioInDir(sess.rjCurrentDir)
+	if len(audios) == 0 {
+		return
+	}
+	allSelected := true
+	for _, t := range audios {
+		if _, ok := sess.rjSelectedURLs[t.MediaDownloadURL]; !ok {
+			allSelected = false
+			break
+		}
+	}
+	if allSelected {
+		for _, t := range audios {
+			delete(sess.rjSelectedURLs, t.MediaDownloadURL)
+		}
+	} else {
+		for _, t := range audios {
+			vtt := t.FindVTTPeer(sess.rjCurrentDir)
+			if vtt != nil {
+				sess.rjSelectedURLs[t.MediaDownloadURL] = asmrone.AudioVTTPair{Audio: t, VTT: *vtt}
+			}
+		}
+	}
+	b.store.set(chatID, sess)
+	b.refreshRJBrowse(ctx, chatID, sess)
 }
 
 // --- RJ job creation ---
 
 // handleRJConfirm downloads audio + VTT from asmr.one and creates one job per audio file.
 func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *session) {
-	audioFiles := sess.rjAudioFiles
-	vttTrack := sess.rjVTT
+	pairs := make([]asmrone.AudioVTTPair, 0, len(sess.rjSelectedURLs))
+	for _, p := range sess.rjSelectedURLs {
+		pairs = append(pairs, p)
+	}
 	token := sess.rjAsmrToken
 	cfg := sess.cfg
 	userID := sess.userID
@@ -354,35 +352,37 @@ func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *ses
 
 	b.store.reset(chatID)
 	b.api.sendMessage(ctx, chatID, //nolint:errcheck
-		fmt.Sprintf("⏳ Downloading %d audio file(s) and subtitle from asmr.one…", len(audioFiles)), nil)
+		fmt.Sprintf("⏳ Downloading %d audio file(s) and subtitles from asmr.one…", len(pairs)), nil)
 
 	go func() {
 		bgCtx := context.Background()
 
-		// Download VTT once; all jobs share the same key.
-		vttKey, err := b.downloadFromAsmrOne(bgCtx, token, vttTrack.MediaDownloadURL, userID, vttTrack.Title)
-		if err != nil {
-			log.Printf("tgbot: rj download vtt: %v", err)
-			b.api.sendMessage(bgCtx, chatID, "❌ Failed to download subtitle: "+err.Error(), nil) //nolint:errcheck
-			return
-		}
-
 		var jobIDs []string
-		for _, audioTrack := range audioFiles {
-			audioKey, err := b.downloadFromAsmrOne(bgCtx, token, audioTrack.MediaDownloadURL, userID, audioTrack.Title)
+		for _, pair := range pairs {
+			vttKey, err := b.downloadFromAsmrOne(bgCtx, token, pair.VTT.MediaDownloadURL, userID, pair.VTT.Title)
 			if err != nil {
-				log.Printf("tgbot: rj download audio %s: %v", audioTrack.Title, err)
+				log.Printf("tgbot: rj download vtt %s: %v", pair.VTT.Title, err)
 				b.api.sendMessage(bgCtx, chatID, //nolint:errcheck
-					fmt.Sprintf("❌ Failed to download %s: %s", audioTrack.Title, err.Error()), nil)
+					fmt.Sprintf("❌ Failed to download subtitle for %s: %s", pair.Audio.Title, err.Error()), nil)
 				continue
 			}
 
-			job, err := b.cfg.JobSvc.CreateJob(bgCtx, userID, audioKey, vttKey, audioTrack.Title, vttTrack.Title, cfg)
+			audioKey, err := b.downloadFromAsmrOne(bgCtx, token, pair.Audio.MediaDownloadURL, userID, pair.Audio.Title)
 			if err != nil {
-				log.Printf("tgbot: rj create job for %s: %v", audioTrack.Title, err)
-				b.cfg.Storage.Delete(bgCtx, audioKey) //nolint:errcheck
+				log.Printf("tgbot: rj download audio %s: %v", pair.Audio.Title, err)
+				b.cfg.Storage.Delete(bgCtx, vttKey) //nolint:errcheck
 				b.api.sendMessage(bgCtx, chatID, //nolint:errcheck
-					fmt.Sprintf("❌ Failed to queue job for %s: %s", audioTrack.Title, err.Error()), nil)
+					fmt.Sprintf("❌ Failed to download %s: %s", pair.Audio.Title, err.Error()), nil)
+				continue
+			}
+
+			job, err := b.cfg.JobSvc.CreateJob(bgCtx, userID, audioKey, vttKey, pair.Audio.Title, pair.VTT.Title, cfg)
+			if err != nil {
+				log.Printf("tgbot: rj create job for %s: %v", pair.Audio.Title, err)
+				b.cfg.Storage.Delete(bgCtx, audioKey) //nolint:errcheck
+				b.cfg.Storage.Delete(bgCtx, vttKey)   //nolint:errcheck
+				b.api.sendMessage(bgCtx, chatID, //nolint:errcheck
+					fmt.Sprintf("❌ Failed to queue job for %s: %s", pair.Audio.Title, err.Error()), nil)
 				continue
 			}
 			jobIDs = append(jobIDs, job.ID)
@@ -390,7 +390,6 @@ func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *ses
 		}
 
 		if len(jobIDs) == 0 {
-			b.cfg.Storage.Delete(bgCtx, vttKey) //nolint:errcheck
 			return
 		}
 
@@ -454,7 +453,7 @@ func (b *BotServer) rjParseIdx(sess *session, idxStr string) (int, []asmrone.Tra
 	if _, err := fmt.Sscanf(idxStr, "%d", &idx); err != nil {
 		return -1, nil
 	}
-	items := asmrone.BrowseItems(sess.rjCurrentDir)
+	items := asmrone.SubtitledBrowseItems(sess.rjCurrentDir)
 	if idx < 0 || idx >= len(items) {
 		return -1, nil
 	}

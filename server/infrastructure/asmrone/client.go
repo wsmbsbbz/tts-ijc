@@ -63,7 +63,7 @@ func (c *Client) do(req *http.Request, dst any) error {
 // GetWorkInfo fetches metadata for the given RJ work (no auth required).
 func (c *Client) GetWorkInfo(ctx context.Context, workno string) (*WorkInfo, error) {
 	id := normalizeID(workno)
-	url := fmt.Sprintf("%s/api/workInfo/RJ%s", baseURL, id)
+	url := fmt.Sprintf("%s/api/workInfo/%s", baseURL, id)
 	req, err := c.newRequest(ctx, http.MethodGet, url)
 	if err != nil {
 		return nil, err
@@ -78,7 +78,7 @@ func (c *Client) GetWorkInfo(ctx context.Context, workno string) (*WorkInfo, err
 // GetTracks fetches the full file tree for the given RJ work. Requires a valid token.
 func (c *Client) GetTracks(ctx context.Context, workno string) ([]Track, error) {
 	id := normalizeID(workno)
-	url := fmt.Sprintf("%s/api/tracks/RJ%s", baseURL, id)
+	url := fmt.Sprintf("%s/api/tracks/%s", baseURL, id)
 	req, err := c.newRequest(ctx, http.MethodGet, url)
 	if err != nil {
 		return nil, err
