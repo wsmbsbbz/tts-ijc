@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/wsmbsbbz/tts-ijc/server/domain"
@@ -345,6 +346,8 @@ func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *ses
 	for _, p := range sess.rjSelectedURLs {
 		pairs = append(pairs, p)
 	}
+	// Sort alphabetically so job creation order (and notification order) matches the browse UI.
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Audio.Title < pairs[j].Audio.Title })
 	token := sess.rjAsmrToken
 	cfg := sess.cfg
 	userID := sess.userID
@@ -386,7 +389,6 @@ func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *ses
 				continue
 			}
 			jobIDs = append(jobIDs, job.ID)
-			go b.notifier.watch(bgCtx, chatID, job.ID)
 		}
 
 		if len(jobIDs) == 0 {
@@ -400,6 +402,9 @@ func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *ses
 		}
 		sb.WriteString("\nI'll notify you as each one finishes.")
 		b.api.sendMessage(bgCtx, chatID, sb.String(), nil) //nolint:errcheck
+
+		// Deliver completion notifications in the original (alphabetical) order.
+		b.notifier.watchOrdered(bgCtx, chatID, jobIDs)
 	}()
 }
 

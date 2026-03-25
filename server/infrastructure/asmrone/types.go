@@ -1,6 +1,9 @@
 package asmrone
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // WorkInfo contains metadata for an asmr.one work.
 type WorkInfo struct {
@@ -101,16 +104,20 @@ func HasSubtitledAudio(tracks []Track) bool {
 // when subtitle-filtering is active:
 //   - folders that contain at least one subtitled audio anywhere in their subtree
 //   - audio files that have a matching .vtt sibling in the same directory
+//
+// Results are sorted alphabetically: folders first (A–Z), then audio files (A–Z).
 func SubtitledBrowseItems(tracks []Track) []Track {
-	var out []Track
+	var folders, audios []Track
 	for _, t := range tracks {
 		if t.IsFolder() && HasSubtitledAudio(t.Children) {
-			out = append(out, t)
+			folders = append(folders, t)
 		} else if t.IsAudio() && t.HasVTTPair(tracks) {
-			out = append(out, t)
+			audios = append(audios, t)
 		}
 	}
-	return out
+	sort.Slice(folders, func(i, j int) bool { return folders[i].Title < folders[j].Title })
+	sort.Slice(audios, func(i, j int) bool { return audios[i].Title < audios[j].Title })
+	return append(folders, audios...)
 }
 
 // SubtitledAudioInDir returns all audio files in the given (flat) directory

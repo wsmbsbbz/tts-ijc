@@ -64,6 +64,75 @@ func (n *notifier) watch(ctx context.Context, chatID int64, jobID string) {
 	}
 }
 
+// jobCompletion carries the terminal result of a single job for ordered delivery.
+type jobCompletion struct {
+	job    domain.Job
+	failed bool
+	errMsg string
+}
+
+// watchOrdered watches multiple jobs in parallel (sending progress as each
+// advances) and delivers completion notifications in the original jobIDs order.
+func (n *notifier) watchOrdered(ctx context.Context, chatID int64, jobIDs []string) {
+	completions := make([]chan jobCompletion, len(jobIDs))
+	for i := range completions {
+		completions[i] = make(chan jobCompletion, 1)
+	}
+	for i, jobID := range jobIDs {
+		go n.watchAndSignal(ctx, chatID, jobID, completions[i])
+	}
+	for _, ch := range completions {
+		result := <-ch
+		if result.failed {
+			n.api.sendMessage(ctx, chatID, "❌ Job failed: "+result.errMsg, nil) //nolint:errcheck
+		} else {
+			n.deliver(ctx, chatID, result.job)
+		}
+	}
+}
+
+// watchAndSignal is like watch but sends the terminal result to done instead of
+// delivering it directly, so the caller can sequence deliveries.
+func (n *notifier) watchAndSignal(ctx context.Context, chatID int64, jobID string, done chan<- jobCompletion) {
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	var lastProgress string
+	for {
+		select {
+		case <-ctx.Done():
+			done <- jobCompletion{failed: true, errMsg: "context cancelled"}
+			return
+		case <-ticker.C:
+			job, err := n.jobSvc.GetJob(ctx, jobID)
+			if err != nil {
+				log.Printf("tgbot: poll job %s: %v", jobID, err)
+				continue
+			}
+
+			if job.Progress != lastProgress && job.Progress != "" {
+				lastProgress = job.Progress
+				if err := n.api.sendMessage(ctx, chatID, "⏳ "+job.Progress, nil); err != nil {
+					log.Printf("tgbot: send progress: %v", err)
+				}
+			}
+
+			switch job.Status {
+			case domain.StatusCompleted:
+				done <- jobCompletion{job: job}
+				return
+			case domain.StatusFailed:
+				msg := "unknown error"
+				if job.Error != nil {
+					msg = *job.Error
+				}
+				done <- jobCompletion{failed: true, errMsg: msg}
+				return
+			}
+		}
+	}
+}
+
 func (n *notifier) deliver(ctx context.Context, chatID int64, job domain.Job) {
 	ext := path.Ext(job.AudioName)
 	base := job.AudioName[:len(job.AudioName)-len(ext)]
