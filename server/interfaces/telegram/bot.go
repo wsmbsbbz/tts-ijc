@@ -444,7 +444,7 @@ func (b *BotServer) handleDownloadCallback(ctx context.Context, chatID int64, us
 		b.cfg.UserRepo.IncrementDownloadBytes(ctx, userID, job.OutputSize) //nolint:errcheck
 	}
 
-	if job.OutputSize > 0 && job.OutputSize <= maxTGSendSize {
+	if job.OutputSize > 0 && job.OutputSize <= b.notifier.maxSendSize {
 		caption := fmt.Sprintf("📥 <b>%s</b>", outputName)
 		if err := b.api.sendDocument(ctx, chatID, url, caption); err != nil {
 			log.Printf("tgbot: send document: %v", err)
@@ -454,8 +454,9 @@ func (b *BotServer) handleDownloadCallback(ctx context.Context, chatID int64, us
 	}
 
 	sizeMB := float64(job.OutputSize) / (1024 * 1024)
+	limitMB := float64(b.notifier.maxSendSize) / (1024 * 1024)
 	b.api.sendMessage(ctx, chatID, //nolint:errcheck
-		fmt.Sprintf("📥 File is %.1f MB (Telegram limit 50 MB).\nDownload link (24 h):\n%s", sizeMB, url), nil)
+		fmt.Sprintf("📥 File is %.1f MB (limit %.0f MB).\nDownload link (24 h):\n%s", sizeMB, limitMB, url), nil)
 }
 
 func (b *BotServer) handleMe(ctx context.Context, chatID int64, userID string) {
