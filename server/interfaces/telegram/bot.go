@@ -17,8 +17,11 @@ import (
 )
 
 const (
-	maxTelegramFileSize = 20 * 1024 * 1024 // 20 MB Telegram inbound limit
-	longPollTimeout     = 30               // seconds for getUpdates long-polling
+	officialMaxFileSize = 20 * 1024 * 1024        // 20 MB – official Bot API inbound limit
+	officialMaxSendSize = 50 * 1024 * 1024        // 50 MB – official Bot API outbound limit
+	localMaxFileSize    = 2 * 1024 * 1024 * 1024  // 2 GB  – local Bot API server limit
+	localMaxSendSize    = 2 * 1024 * 1024 * 1024  // 2 GB  – local Bot API server limit
+	longPollTimeout     = 30                      // seconds for getUpdates long-polling
 )
 
 // BotConfig holds all dependencies needed by the BotServer.
@@ -33,29 +36,42 @@ type BotConfig struct {
 	AllowedProviders string // comma-separated list, e.g. "edge,gtts"
 	UploadLimit      int64
 	DownloadLimit    int64
+	// APIURL is the base URL of the Telegram Bot API server.
+	// Empty = use the official https://api.telegram.org (20 MB / 50 MB limits).
+	// When set (e.g. "http://telegram-bot-api:8081"), file limits rise to 2 GB.
+	APIURL string
 }
 
 // BotServer runs the Telegram bot update loop alongside the HTTP server.
 type BotServer struct {
-	api        *tgAPI
-	cfg        BotConfig
-	store      *stateStore
-	notifier   *notifier
-	httpClient *http.Client
+	api         *tgAPI
+	cfg         BotConfig
+	maxFileSize int64
+	store       *stateStore
+	notifier    *notifier
+	httpClient  *http.Client
 }
 
 // NewBotServer constructs a BotServer. The token is not validated here;
 // the first call to getUpdates will fail if it is invalid.
 func NewBotServer(cfg BotConfig) *BotServer {
-	api := newTGAPI(cfg.Token)
+	api := newTGAPI(cfg.Token, cfg.APIURL)
+	maxFile := int64(officialMaxFileSize)
+	maxSend := int64(officialMaxSendSize)
+	if cfg.APIURL != "" {
+		maxFile = int64(localMaxFileSize)
+		maxSend = int64(localMaxSendSize)
+	}
 	return &BotServer{
-		api:   api,
-		cfg:   cfg,
-		store: newStateStore(),
+		api:         api,
+		cfg:         cfg,
+		maxFileSize: maxFile,
+		store:       newStateStore(),
 		notifier: &notifier{
-			api:     api,
-			jobSvc:  cfg.JobSvc,
-			storage: cfg.Storage,
+			api:         api,
+			jobSvc:      cfg.JobSvc,
+			storage:     cfg.Storage,
+			maxSendSize: maxSend,
 		},
 		httpClient: &http.Client{Timeout: 60 * time.Second},
 	}
@@ -545,10 +561,11 @@ func (b *BotServer) handleAudioUpload(ctx context.Context, chatID int64, sess *s
 		b.api.sendMessage(ctx, chatID, "Please send an audio file (MP3, WAV, OGG, M4A, FLAC, AAC, etc.).", nil) //nolint:errcheck
 		return
 	}
-	if fileSize > maxTelegramFileSize {
+	if fileSize > b.maxFileSize {
 		b.api.sendMessage(ctx, chatID, //nolint:errcheck
-			fmt.Sprintf("File too large (%.1f MB). Telegram allows up to 20 MB per file.",
-				float64(fileSize)/(1024*1024)), nil)
+			fmt.Sprintf("File too large (%.1f MB). Max allowed: %.0f MB.",
+				float64(fileSize)/(1024*1024),
+				float64(b.maxFileSize)/(1024*1024)), nil)
 		return
 	}
 
@@ -573,8 +590,9 @@ func (b *BotServer) handleVTTUpload(ctx context.Context, chatID int64, sess *ses
 		b.api.sendMessage(ctx, chatID, "Please send a WebVTT (.vtt) subtitle file.", nil) //nolint:errcheck
 		return
 	}
-	if doc.FileSize > maxTelegramFileSize {
-		b.api.sendMessage(ctx, chatID, "Subtitle file too large (max 20 MB).", nil) //nolint:errcheck
+	if doc.FileSize > b.maxFileSize {
+		b.api.sendMessage(ctx, chatID, //nolint:errcheck
+			fmt.Sprintf("Subtitle file too large (max %.0f MB).", float64(b.maxFileSize)/(1024*1024)), nil)
 		return
 	}
 

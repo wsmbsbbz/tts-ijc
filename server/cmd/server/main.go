@@ -131,6 +131,7 @@ func main() {
 			AllowedProviders: cfg.AllowedTTSProviders,
 			UploadLimit:      cfg.UserUploadLimitBytes,
 			DownloadLimit:    cfg.UserDownloadLimitBytes,
+			APIURL:           cfg.TelegramAPIURL,
 		})
 		go botSrv.Start(ctx)
 		log.Println("telegram bot: enabled")

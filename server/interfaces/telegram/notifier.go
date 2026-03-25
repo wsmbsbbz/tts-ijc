@@ -13,14 +13,14 @@ import (
 
 const (
 	pollInterval      = 5 * time.Second
-	maxTGSendSize     = 50 * 1024 * 1024 // 50 MB Telegram outbound limit
 	downloadURLExpiry = 24 * time.Hour
 )
 
 type notifier struct {
-	api     *tgAPI
-	jobSvc  *application.JobService
-	storage domain.FileStorage
+	api         *tgAPI
+	jobSvc      *application.JobService
+	storage     domain.FileStorage
+	maxSendSize int64
 }
 
 // watch polls jobID every 5 seconds until it reaches a terminal state,
@@ -145,7 +145,7 @@ func (n *notifier) deliver(ctx context.Context, chatID int64, job domain.Job) {
 		return
 	}
 
-	if job.OutputSize > 0 && job.OutputSize <= maxTGSendSize {
+	if job.OutputSize > 0 && job.OutputSize <= n.maxSendSize {
 		caption := fmt.Sprintf("✅ Done! <b>%s</b>", outputName)
 		if err := n.api.sendDocument(ctx, chatID, url, caption); err != nil {
 			log.Printf("tgbot: send document: %v", err)
@@ -156,6 +156,7 @@ func (n *notifier) deliver(ctx context.Context, chatID int64, job domain.Job) {
 	}
 
 	sizeMB := float64(job.OutputSize) / (1024 * 1024)
+	limitMB := float64(n.maxSendSize) / (1024 * 1024)
 	n.api.sendMessage(ctx, chatID, //nolint:errcheck
-		fmt.Sprintf("✅ Done! File is %.1f MB (Telegram limit 50 MB).\nDownload link (24 h):\n%s", sizeMB, url), nil)
+		fmt.Sprintf("✅ Done! File is %.1f MB (limit %.0f MB).\nDownload link (24 h):\n%s", sizeMB, limitMB, url), nil)
 }

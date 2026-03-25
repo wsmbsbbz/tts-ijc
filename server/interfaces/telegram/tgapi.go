@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-const tgAPIBase = "https://api.telegram.org"
-
 // --- Telegram Bot API types ---
 
 // Update is an incoming update from Telegram.
@@ -104,24 +102,29 @@ type InlineKeyboardButton struct {
 // --- API client ---
 
 type tgAPI struct {
-	token  string
-	client *http.Client
+	token   string
+	baseURL string
+	client  *http.Client
 }
 
-func newTGAPI(token string) *tgAPI {
+func newTGAPI(token, baseURL string) *tgAPI {
+	if baseURL == "" {
+		baseURL = "https://api.telegram.org"
+	}
 	return &tgAPI{
-		token:  token,
-		client: &http.Client{Timeout: 90 * time.Second},
+		token:   token,
+		baseURL: baseURL,
+		client:  &http.Client{Timeout: 90 * time.Second},
 	}
 }
 
 func (a *tgAPI) methodURL(method string) string {
-	return fmt.Sprintf("%s/bot%s/%s", tgAPIBase, a.token, method)
+	return fmt.Sprintf("%s/bot%s/%s", a.baseURL, a.token, method)
 }
 
-// FileDownloadURL returns the HTTPS URL to download a file from Telegram.
+// FileDownloadURL returns the URL to download a file from Telegram (or local server).
 func (a *tgAPI) FileDownloadURL(filePath string) string {
-	return fmt.Sprintf("%s/file/bot%s/%s", tgAPIBase, a.token, filePath)
+	return fmt.Sprintf("%s/file/bot%s/%s", a.baseURL, a.token, filePath)
 }
 
 type apiResp struct {

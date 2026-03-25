@@ -38,6 +38,11 @@ type Config struct {
 
 	// Telegram bot configuration. Bot is disabled when TelegramBotToken is empty.
 	TelegramBotToken string
+
+	// TelegramAPIURL points to a local telegram-bot-api server, e.g. "http://telegram-bot-api:8081".
+	// Empty = use the official https://api.telegram.org (20 MB / 50 MB limits apply).
+	// When set, file size limits are raised to 2 GB.
+	TelegramAPIURL string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -66,6 +71,7 @@ func Load() Config {
 		UserDownloadLimitBytes: envInt64("USER_DOWNLOAD_LIMIT_BYTES", 3<<30), // 3 GB
 
 		TelegramBotToken: envStr("TELEGRAM_BOT_TOKEN", ""),
+		TelegramAPIURL:   envStr("TELEGRAM_API_URL", ""),
 	}
 }
 
