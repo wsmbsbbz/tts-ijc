@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log"
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/wsmbsbbz/tts-ijc/server/domain"
 )
@@ -57,14 +59,11 @@ func (t *PythonTranslator) Execute(ctx context.Context, input domain.TranslateIn
 		return fmt.Errorf("start python: %w", err)
 	}
 
-	var lastLines []string
+	var allLines []string
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		line := scanner.Text()
-		lastLines = append(lastLines, line)
-		if len(lastLines) > 20 {
-			lastLines = lastLines[len(lastLines)-20:]
-		}
+		allLines = append(allLines, line)
 		if onProgress != nil {
 			if p, ok := parseProgress(line); ok {
 				onProgress(p)
@@ -73,11 +72,20 @@ func (t *PythonTranslator) Execute(ctx context.Context, input domain.TranslateIn
 	}
 
 	if err := cmd.Wait(); err != nil {
-		tail := ""
-		if len(lastLines) > 0 {
-			tail = ": " + lastLines[len(lastLines)-1]
+		// Find the first ERROR: line (written to stderr which is unbuffered,
+		// so it appears early in the merged output, before buffered stdout lines).
+		detail := ""
+		for _, line := range allLines {
+			if strings.HasPrefix(line, "ERROR:") || strings.HasPrefix(line, "Traceback") {
+				detail = ": " + line
+				break
+			}
 		}
-		return fmt.Errorf("python exited with error: %w%s", err, tail)
+		if detail == "" && len(allLines) > 0 {
+			detail = ": " + allLines[0]
+		}
+		log.Printf("translator: python output:\n%s", strings.Join(allLines, "\n"))
+		return fmt.Errorf("python exited with error: %w%s", err, detail)
 	}
 
 	return nil
