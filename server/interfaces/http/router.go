@@ -16,6 +16,11 @@ func NewRouter(
 ) http.Handler {
 	mux := http.NewServeMux()
 
+	// Healthcheck
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
 	// Public routes
 	mux.HandleFunc("/api/auth/register", authHandler.HandleRegister)
 	mux.HandleFunc("/api/auth/login", authHandler.HandleLogin)
