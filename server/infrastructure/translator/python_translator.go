@@ -57,9 +57,14 @@ func (t *PythonTranslator) Execute(ctx context.Context, input domain.TranslateIn
 		return fmt.Errorf("start python: %w", err)
 	}
 
+	var lastLines []string
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		line := scanner.Text()
+		lastLines = append(lastLines, line)
+		if len(lastLines) > 20 {
+			lastLines = lastLines[len(lastLines)-20:]
+		}
 		if onProgress != nil {
 			if p, ok := parseProgress(line); ok {
 				onProgress(p)
@@ -68,7 +73,11 @@ func (t *PythonTranslator) Execute(ctx context.Context, input domain.TranslateIn
 	}
 
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("python exited with error: %w", err)
+		tail := ""
+		if len(lastLines) > 0 {
+			tail = ": " + lastLines[len(lastLines)-1]
+		}
+		return fmt.Errorf("python exited with error: %w%s", err, tail)
 	}
 
 	return nil
