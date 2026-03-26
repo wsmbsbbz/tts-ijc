@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -123,8 +124,10 @@ func (a *tgAPI) methodURL(method string) string {
 }
 
 // FileDownloadURL returns the URL to download a file from Telegram (or local server).
+// In local mode the server returns an absolute path as file_path (e.g. /var/lib/...),
+// so we strip the leading slash to avoid a double-slash in the URL.
 func (a *tgAPI) FileDownloadURL(filePath string) string {
-	return fmt.Sprintf("%s/file/bot%s/%s", a.baseURL, a.token, filePath)
+	return fmt.Sprintf("%s/file/bot%s/%s", a.baseURL, a.token, strings.TrimPrefix(filePath, "/"))
 }
 
 type apiResp struct {
