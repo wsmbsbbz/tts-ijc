@@ -113,11 +113,17 @@ func (b *BotServer) Start(ctx context.Context) {
 				return
 			}
 			log.Printf("tgbot: get updates: %v", err)
-			// Back off briefly to avoid hammering the API on repeated errors.
+			// 409 means another instance is already polling (e.g. during a
+			// rolling deploy). Back off long enough for the old instance to
+			// be terminated before retrying.
+			backoff := 5 * time.Second
+			if strings.Contains(err.Error(), "[409]") {
+				backoff = 30 * time.Second
+			}
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(5 * time.Second):
+			case <-time.After(backoff):
 			}
 			continue
 		}
