@@ -124,10 +124,20 @@ func (a *tgAPI) methodURL(method string) string {
 }
 
 // FileDownloadURL returns the URL to download a file from Telegram (or local server).
-// In local mode the server returns an absolute path as file_path (e.g. /var/lib/...),
-// so we strip the leading slash to avoid a double-slash in the URL.
+// In local mode the server returns an absolute path as file_path
+// (e.g. /var/lib/telegram-bot-api/TOKEN/music/file_0.mp3). The local server's
+// HTTP handler expects a path relative to its working directory, so we extract
+// the portion starting from the token directory (TOKEN/music/file_0.mp3).
 func (a *tgAPI) FileDownloadURL(filePath string) string {
-	return fmt.Sprintf("%s/file/bot%s/%s", a.baseURL, a.token, strings.TrimPrefix(filePath, "/"))
+	if strings.HasPrefix(filePath, "/") {
+		// Absolute path: find the token directory and use everything from there.
+		if idx := strings.Index(filePath, "/"+a.token+"/"); idx >= 0 {
+			filePath = filePath[idx+1:] // "TOKEN/type/filename"
+		} else {
+			filePath = strings.TrimPrefix(filePath, "/")
+		}
+	}
+	return fmt.Sprintf("%s/file/bot%s/%s", a.baseURL, a.token, filePath)
 }
 
 type apiResp struct {
