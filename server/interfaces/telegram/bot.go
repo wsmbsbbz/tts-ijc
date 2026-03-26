@@ -829,6 +829,9 @@ func (b *BotServer) uploadTelegramFile(ctx context.Context, fileID, userID, file
 		return "", fmt.Errorf("download from telegram: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download from telegram: unexpected status %d (url: %s)", resp.StatusCode, downloadURL)
+	}
 
 	tmp, err := os.CreateTemp("", "tgbot-*-"+sanitizeFileName(fileName))
 	if err != nil {
