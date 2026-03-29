@@ -33,7 +33,7 @@ COPY --from=tgapi /usr/lib/libssl.so.3 /usr/local/lib/tgapi/
 COPY --from=tgapi /usr/lib/libcrypto.so.3 /usr/local/lib/tgapi/
 COPY --from=tgapi /usr/lib/libstdc++.so.6 /usr/local/lib/tgapi/
 COPY --from=tgapi /usr/lib/libgcc_s.so.1 /usr/local/lib/tgapi/
-COPY --from=tgapi /lib/libz.so.1 /usr/local/lib/tgapi/
+COPY --from=tgapi /usr/lib/libz.so.1 /usr/local/lib/tgapi/
 # Tell musl linker where to find these libs (does NOT affect glibc-linked Python/ffmpeg)
 RUN echo "/usr/local/lib/tgapi" > /etc/ld-musl-x86_64.path
 
