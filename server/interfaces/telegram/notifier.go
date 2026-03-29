@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"path"
 	"time"
 
@@ -138,25 +139,39 @@ func (n *notifier) deliver(ctx context.Context, chatID int64, job domain.Job) {
 	base := job.AudioName[:len(job.AudioName)-len(ext)]
 	outputName := base + "_translated.mp3"
 
+	// Always try to send the file directly via multipart upload.
+	// This works with both the official API (≤50 MB) and the local server (≤2 GB).
+	caption := fmt.Sprintf("✅ Done! <b>%s</b>", outputName)
+	if err := n.sendDirect(ctx, chatID, job, outputName, caption); err != nil {
+		log.Printf("tgbot: direct send for job %s: %v, falling back to link", job.ID, err)
+	} else {
+		return
+	}
+
+	// Fallback: R2 presigned download link.
 	url, err := n.storage.GenerateDownloadURL(ctx, job.OutputKey, downloadURLExpiry, outputName)
 	if err != nil {
 		log.Printf("tgbot: generate download url for job %s: %v", job.ID, err)
 		n.api.sendMessage(ctx, chatID, "✅ Job complete, but failed to generate download link.", nil) //nolint:errcheck
 		return
 	}
-
-	if job.OutputSize > 0 && job.OutputSize <= n.maxSendSize {
-		caption := fmt.Sprintf("✅ Done! <b>%s</b>", outputName)
-		if err := n.api.sendDocument(ctx, chatID, url, caption); err != nil {
-			log.Printf("tgbot: send document: %v", err)
-			// Fall back to a plain download link.
-			n.api.sendMessage(ctx, chatID, fmt.Sprintf("✅ Done! Download (24 h):\n%s", url), nil) //nolint:errcheck
-		}
-		return
-	}
-
-	sizeMB := float64(job.OutputSize) / (1024 * 1024)
-	limitMB := float64(n.maxSendSize) / (1024 * 1024)
 	n.api.sendMessage(ctx, chatID, //nolint:errcheck
-		fmt.Sprintf("✅ Done! File is %.1f MB (limit %.0f MB).\nDownload link (24 h):\n%s", sizeMB, limitMB, url), nil)
+		fmt.Sprintf("✅ Done! Download (24 h):\n%s", url), nil)
+}
+
+// sendDirect downloads the output from R2 to a temp file and uploads it
+// directly to Telegram via multipart. The temp file is removed afterwards.
+func (n *notifier) sendDirect(ctx context.Context, chatID int64, job domain.Job, filename, caption string) error {
+	tmp, err := os.CreateTemp("", "tg_deliver_*.mp3")
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	tmp.Close()
+	defer os.Remove(tmpPath)
+
+	if err := n.storage.Download(ctx, job.OutputKey, tmpPath); err != nil {
+		return fmt.Errorf("download from r2: %w", err)
+	}
+	return n.api.sendDocumentMultipart(ctx, chatID, tmpPath, filename, caption)
 }
