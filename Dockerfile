@@ -14,7 +14,7 @@ FROM aiogram/telegram-bot-api:latest AS tgapi
 # Stage 3: Runtime — Alpine so telegram-bot-api (musl) runs natively
 FROM python:3.11-alpine3.20
 
-RUN apk add --no-cache ffmpeg
+RUN apk add --no-cache ffmpeg bash
 
 COPY cli/requirements.txt /opt/tc/requirements.txt
 RUN pip install --no-cache-dir -r /opt/tc/requirements.txt
