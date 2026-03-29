@@ -819,6 +819,22 @@ func (b *BotServer) uploadTelegramFile(ctx context.Context, fileID, userID, file
 		return "", fmt.Errorf("get telegram file info: %w", err)
 	}
 
+	key := path.Join("uploads", userID, b.cfg.IDFunc(), fileName)
+
+	// In local bot API mode, file_path is an absolute path on the container's
+	// filesystem (shared with the telegram-bot-api process). Upload directly
+	// without going through the HTTP file-serving endpoint.
+	if strings.HasPrefix(tgFile.FilePath, "/") {
+		if err := b.cfg.Storage.Upload(ctx, tgFile.FilePath, key); err != nil {
+			return "", fmt.Errorf("upload to r2: %w", err)
+		}
+		if tgFile.FileSize > 0 {
+			b.cfg.UserRepo.IncrementUploadBytes(ctx, userID, tgFile.FileSize) //nolint:errcheck
+		}
+		return key, nil
+	}
+
+	// Standard mode: download via HTTP then upload to R2.
 	downloadURL := b.api.FileDownloadURL(tgFile.FilePath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
@@ -830,9 +846,7 @@ func (b *BotServer) uploadTelegramFile(ctx context.Context, fileID, userID, file
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		log.Printf("tgbot: download %s -> %d: %s", downloadURL, resp.StatusCode, body)
-		return "", fmt.Errorf("download from telegram: unexpected status %d (url: %s)", resp.StatusCode, downloadURL)
+		return "", fmt.Errorf("download from telegram: unexpected status %d", resp.StatusCode)
 	}
 
 	tmp, err := os.CreateTemp("", "tgbot-*-"+sanitizeFileName(fileName))
@@ -848,12 +862,10 @@ func (b *BotServer) uploadTelegramFile(ctx context.Context, fileID, userID, file
 	}
 	tmp.Close()
 
-	key := path.Join("uploads", userID, b.cfg.IDFunc(), fileName)
 	if err := b.cfg.Storage.Upload(ctx, tmpName, key); err != nil {
 		return "", fmt.Errorf("upload to r2: %w", err)
 	}
 
-	// Track upload bytes for quota accounting.
 	if tgFile.FileSize > 0 {
 		b.cfg.UserRepo.IncrementUploadBytes(ctx, userID, tgFile.FileSize) //nolint:errcheck
 	}
