@@ -1,19 +1,34 @@
-#!/bin/sh
+#!/bin/bash
 set -e
 
-# Start telegram-bot-api in local mode if credentials are provided.
-# Running in the same container gives the main app direct filesystem access
-# to downloaded files, bypassing the broken HTTP file-serving endpoint.
 if [ -n "$TELEGRAM_API_ID" ] && [ -n "$TELEGRAM_API_HASH" ]; then
-    mkdir -p /var/lib/telegram-bot-api
-    telegram-bot-api \
-        --api-id="$TELEGRAM_API_ID" \
-        --api-hash="$TELEGRAM_API_HASH" \
-        --local \
-        --dir=/var/lib/telegram-bot-api \
-        --port=8081 \
-        --no-interactive &
-    echo "telegram-bot-api: started on :8081"
+    if ! command -v telegram-bot-api > /dev/null 2>&1; then
+        echo "entrypoint: telegram-bot-api binary not found, skipping"
+    else
+        mkdir -p /var/lib/telegram-bot-api
+        telegram-bot-api \
+            --api-id="$TELEGRAM_API_ID" \
+            --api-hash="$TELEGRAM_API_HASH" \
+            --local \
+            --dir=/var/lib/telegram-bot-api \
+            --port=8081 \
+            --no-interactive &
+        TG_PID=$!
+        echo "entrypoint: telegram-bot-api started (pid=$TG_PID), waiting for :8081..."
+
+        # Wait up to 30s for telegram-bot-api to bind port 8081
+        for i in $(seq 1 30); do
+            if (echo > /dev/tcp/127.0.0.1/8081) 2>/dev/null; then
+                echo "entrypoint: telegram-bot-api ready"
+                break
+            fi
+            if ! kill -0 "$TG_PID" 2>/dev/null; then
+                echo "entrypoint: telegram-bot-api process died (pid=$TG_PID)"
+                break
+            fi
+            sleep 1
+        done
+    fi
 fi
 
 exec server
