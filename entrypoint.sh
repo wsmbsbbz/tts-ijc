@@ -11,8 +11,7 @@ if [ -n "$TELEGRAM_API_ID" ] && [ -n "$TELEGRAM_API_HASH" ]; then
             --api-hash="$TELEGRAM_API_HASH" \
             --local \
             --dir=/var/lib/telegram-bot-api \
-            --port=8081 \
-            --no-interactive &
+            --http-port=8081 &
         TG_PID=$!
         echo "entrypoint: telegram-bot-api started (pid=$TG_PID), waiting for :8081..."
 
