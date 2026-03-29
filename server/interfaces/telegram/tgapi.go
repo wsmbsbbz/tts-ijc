@@ -5,7 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 )
 
@@ -221,6 +225,60 @@ func (a *tgAPI) sendDocument(ctx context.Context, chatID int64, documentURL, cap
 		"parse_mode": "HTML",
 	})
 	return err
+}
+
+// sendDocumentMultipart uploads a local file to chatID as a document via
+// multipart form-data. Unlike sendDocument (which asks Telegram to fetch a
+// URL), this streams the bytes directly — required for the local Bot API
+// server which does not proxy outbound R2 fetches.
+func (a *tgAPI) sendDocumentMultipart(ctx context.Context, chatID int64, localPath, filename, caption string) error {
+	f, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("open: %w", err)
+	}
+	defer f.Close()
+
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	go func() {
+		defer pw.Close()
+		_ = mw.WriteField("chat_id", strconv.FormatInt(chatID, 10))
+		_ = mw.WriteField("caption", caption)
+		_ = mw.WriteField("parse_mode", "HTML")
+		part, err := mw.CreateFormFile("document", filename)
+		if err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		if _, err := io.Copy(part, f); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		mw.Close()
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.methodURL("sendDocument"), pr)
+	if err != nil {
+		pr.CloseWithError(err)
+		return err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+
+	// No client-level timeout — rely on ctx for cancellation.
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var ar apiResp
+	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
+		return fmt.Errorf("decode: %w", err)
+	}
+	if !ar.OK {
+		return fmt.Errorf("telegram api [%d]: %s", ar.ErrorCode, ar.Description)
+	}
+	return nil
 }
 
 // BotCommand represents a single slash command shown in the Telegram menu.

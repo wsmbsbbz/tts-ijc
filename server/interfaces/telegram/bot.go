@@ -438,31 +438,23 @@ func (b *BotServer) handleDownloadCallback(ctx context.Context, chatID int64, us
 	base := job.AudioName[:len(job.AudioName)-len(ext)]
 	outputName := base + "_translated.mp3"
 
-	url, err := b.cfg.Storage.GenerateDownloadURL(ctx, job.OutputKey, downloadURLExpiry, outputName)
-	if err != nil {
-		log.Printf("tgbot: generate download url for job %s: %v", job.ID, err)
-		b.api.sendMessage(ctx, chatID, "Failed to generate download link.", nil) //nolint:errcheck
-		return
-	}
-
 	// Increment download counter.
 	if job.OutputSize > 0 {
 		b.cfg.UserRepo.IncrementDownloadBytes(ctx, userID, job.OutputSize) //nolint:errcheck
 	}
 
-	if job.OutputSize > 0 && job.OutputSize <= b.notifier.maxSendSize {
-		caption := fmt.Sprintf("📥 <b>%s</b>", outputName)
-		if err := b.api.sendDocument(ctx, chatID, url, caption); err != nil {
-			log.Printf("tgbot: send document: %v", err)
-			b.api.sendMessage(ctx, chatID, fmt.Sprintf("📥 Download (24 h):\n%s", url), nil) //nolint:errcheck
+	// Try direct multipart send first; fall back to R2 link.
+	caption := fmt.Sprintf("📥 <b>%s</b>", outputName)
+	if err := b.notifier.sendDirect(ctx, chatID, job, outputName, caption); err != nil {
+		log.Printf("tgbot: direct send for job %s: %v, falling back to link", job.ID, err)
+		url, urlErr := b.cfg.Storage.GenerateDownloadURL(ctx, job.OutputKey, downloadURLExpiry, outputName)
+		if urlErr != nil {
+			log.Printf("tgbot: generate download url for job %s: %v", job.ID, urlErr)
+			b.api.sendMessage(ctx, chatID, "Failed to generate download link.", nil) //nolint:errcheck
+			return
 		}
-		return
+		b.api.sendMessage(ctx, chatID, fmt.Sprintf("📥 Download (24 h):\n%s", url), nil) //nolint:errcheck
 	}
-
-	sizeMB := float64(job.OutputSize) / (1024 * 1024)
-	limitMB := float64(b.notifier.maxSendSize) / (1024 * 1024)
-	b.api.sendMessage(ctx, chatID, //nolint:errcheck
-		fmt.Sprintf("📥 File is %.1f MB (limit %.0f MB).\nDownload link (24 h):\n%s", sizeMB, limitMB, url), nil)
 }
 
 func (b *BotServer) handleMe(ctx context.Context, chatID int64, userID string) {
