@@ -17,10 +17,7 @@ FROM python:3.11-slim-bookworm
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
-        libssl3 \
-        zlib1g \
-        libstdc++6 \
-        libatomic1 && \
+        musl && \
     rm -rf /var/lib/apt/lists/*
 
 COPY cli/requirements.txt /opt/tc/requirements.txt
