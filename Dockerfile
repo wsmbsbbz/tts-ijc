@@ -27,6 +27,15 @@ COPY cli/ /opt/tc/
 
 COPY --from=go-builder /app /usr/local/bin/server
 COPY --from=tgapi /usr/local/bin/telegram-bot-api /usr/local/bin/telegram-bot-api
+# Copy Alpine shared libs needed by telegram-bot-api (musl-linked binary)
+# musl linker is provided by the 'musl' apt package above
+COPY --from=tgapi /usr/lib/libssl.so.3 /usr/local/lib/tgapi/
+COPY --from=tgapi /usr/lib/libcrypto.so.3 /usr/local/lib/tgapi/
+COPY --from=tgapi /usr/lib/libstdc++.so.6 /usr/local/lib/tgapi/
+COPY --from=tgapi /usr/lib/libgcc_s.so.1 /usr/local/lib/tgapi/
+COPY --from=tgapi /lib/libz.so.1 /usr/local/lib/tgapi/
+# Tell musl linker where to find these libs (does NOT affect glibc-linked Python/ffmpeg)
+RUN echo "/usr/local/lib/tgapi" > /etc/ld-musl-x86_64.path
 
 COPY frontend/ /opt/frontend/
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
