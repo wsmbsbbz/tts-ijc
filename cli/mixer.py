@@ -336,13 +336,13 @@ def merge_with_original(
     codec_args: List[str]
 
     if ext == "mp3":
-        codec_args = ["-c:a", "libmp3lame", "-q:a", "2"]
+        codec_args = ["-c:a", "libmp3lame", "-q:a", "2", "-f", "mp3"]
     elif ext in ("m4a", "aac"):
         codec_args = ["-c:a", "aac", "-b:a", "192k"]
     elif ext == "ogg":
-        codec_args = ["-c:a", "libvorbis", "-q:a", "6"]
+        codec_args = ["-c:a", "libvorbis", "-q:a", "6", "-f", "ogg"]
     else:
-        codec_args = ["-c:a", "pcm_s16le"]  # wav fallback
+        codec_args = ["-c:a", "pcm_s16le", "-f", "wav"]
 
     # Apply volume reduction to TTS track, then mix with original untouched
     subprocess.run(
