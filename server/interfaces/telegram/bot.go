@@ -604,11 +604,13 @@ func (b *BotServer) handleVTTUpload(ctx context.Context, chatID int64, sess *ses
 		TTSVolume:   0.08,
 		Concurrency: 3,
 	}
+	text := fmt.Sprintf("✅ Subtitle received: <b>%s</b>\n\nSelect a TTS provider:", doc.FileName)
+	msgID, err := b.api.sendMessageGetID(ctx, chatID, text, b.providerKeyboard())
+	if err != nil {
+		log.Printf("tgbot: send config message: %v", err)
+	}
+	sess.configMsgID = msgID
 	b.store.set(chatID, sess)
-
-	b.api.sendMessage(ctx, chatID, //nolint:errcheck
-		fmt.Sprintf("✅ Subtitle received: <b>%s</b>\n\nSelect a TTS provider:", doc.FileName),
-		b.providerKeyboard())
 }
 
 // --- Text input handler ---
@@ -627,7 +629,11 @@ func (b *BotServer) handleText(ctx context.Context, chatID int64, sess *session,
 		sess.cfg.TTSVolume = vol
 		sess.configStep = configStepSpeedup
 		b.store.set(chatID, sess)
-		b.api.sendMessage(ctx, chatID, "Enable speech acceleration?", b.speedupKeyboard()) //nolint:errcheck
+		if sess.configMsgID != 0 {
+			b.api.editMessageText(ctx, chatID, sess.configMsgID, "Enable speech acceleration?", b.speedupKeyboard()) //nolint:errcheck
+		} else {
+			b.api.sendMessage(ctx, chatID, "Enable speech acceleration?", b.speedupKeyboard()) //nolint:errcheck
+		}
 		return
 	}
 	b.api.sendMessage(ctx, chatID, "Use /new or /rj to start a job, or /help for help.", nil) //nolint:errcheck
@@ -666,7 +672,7 @@ func (b *BotServer) handleCallback(ctx context.Context, cq *CallbackQuery) {
 		b.handleConfirm(ctx, chatID, sess)
 	case data == "cancel_job":
 		b.store.reset(chatID)
-		b.api.sendMessage(ctx, chatID, "Cancelled. Use /new or /rj to start again.", nil) //nolint:errcheck
+		b.api.editMessageText(ctx, chatID, cq.Message.MessageID, "❌ Cancelled. Use /new or /rj to start again.", nil) //nolint:errcheck
 	// RJ workflow callbacks
 	case strings.HasPrefix(data, "rj:t:"):
 		b.handleRJToggle(ctx, chatID, sess, strings.TrimPrefix(data, "rj:t:"))
@@ -702,9 +708,12 @@ func (b *BotServer) handleProviderCallback(ctx context.Context, chatID int64, se
 	sess.configStep = configStepVolume
 	b.store.set(chatID, sess)
 
-	b.api.sendMessage(ctx, chatID, //nolint:errcheck
-		fmt.Sprintf("Provider: <b>%s</b>\n\nChoose TTS volume (or type a number 0.0–1.0):", provider),
-		b.volumeKeyboard())
+	text := fmt.Sprintf("Provider: <b>%s</b>\n\nChoose TTS volume (or type a number 0.0–1.0):", provider)
+	if sess.configMsgID != 0 {
+		b.api.editMessageText(ctx, chatID, sess.configMsgID, text, b.volumeKeyboard()) //nolint:errcheck
+	} else {
+		b.api.sendMessage(ctx, chatID, text, b.volumeKeyboard()) //nolint:errcheck
+	}
 }
 
 func (b *BotServer) handleVolumeCallback(ctx context.Context, chatID int64, sess *session, val string) {
@@ -718,7 +727,11 @@ func (b *BotServer) handleVolumeCallback(ctx context.Context, chatID int64, sess
 	sess.cfg.TTSVolume = vol
 	sess.configStep = configStepSpeedup
 	b.store.set(chatID, sess)
-	b.api.sendMessage(ctx, chatID, "Enable speech acceleration?", b.speedupKeyboard()) //nolint:errcheck
+	if sess.configMsgID != 0 {
+		b.api.editMessageText(ctx, chatID, sess.configMsgID, "Enable speech acceleration?", b.speedupKeyboard()) //nolint:errcheck
+	} else {
+		b.api.sendMessage(ctx, chatID, "Enable speech acceleration?", b.speedupKeyboard()) //nolint:errcheck
+	}
 }
 
 func (b *BotServer) handleSpeedupCallback(ctx context.Context, chatID int64, sess *session, val string) {
@@ -744,7 +757,11 @@ func (b *BotServer) handleSpeedupCallback(ctx context.Context, chatID int64, ses
 		sess.audioName, sess.vttName,
 		sess.cfg.TTSProvider, sess.cfg.TTSVolume, speedupStr,
 	)
-	b.api.sendMessage(ctx, chatID, summary, b.confirmKeyboard()) //nolint:errcheck
+	if sess.configMsgID != 0 {
+		b.api.editMessageText(ctx, chatID, sess.configMsgID, summary, b.confirmKeyboard()) //nolint:errcheck
+	} else {
+		b.api.sendMessage(ctx, chatID, summary, b.confirmKeyboard()) //nolint:errcheck
+	}
 }
 
 // handleConfirm downloads both files from Telegram, uploads them to R2,
@@ -765,9 +782,14 @@ func (b *BotServer) handleConfirm(ctx context.Context, chatID int64, sess *sessi
 	vttName := sess.vttName
 	cfg := sess.cfg
 	userID := sess.userID
+	configMsgID := sess.configMsgID
 
 	b.store.reset(chatID)
-	b.api.sendMessage(ctx, chatID, "⏳ Uploading files…", nil) //nolint:errcheck
+	if configMsgID != 0 {
+		b.api.editMessageText(ctx, chatID, configMsgID, "⏳ Uploading files…", nil) //nolint:errcheck
+	} else {
+		b.api.sendMessage(ctx, chatID, "⏳ Uploading files…", nil) //nolint:errcheck
+	}
 
 	go func() {
 		bgCtx := context.Background()
