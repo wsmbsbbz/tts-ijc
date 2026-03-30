@@ -45,6 +45,8 @@ type session struct {
 	vttName     string
 	vttSize     int64
 	cfg         domain.JobConfig
+	// Config wizard message (shared by upload and RJ workflows)
+	configMsgID int // message ID of the provider/volume/speedup wizard message
 	// RJ workflow
 	rjMode        bool            // true when job originates from asmr.one
 	rjWorkno      string          // e.g. "RJ299717"

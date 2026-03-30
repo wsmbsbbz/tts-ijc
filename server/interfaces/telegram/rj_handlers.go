@@ -297,12 +297,14 @@ func (b *BotServer) handleRJDoneAudio(ctx context.Context, chatID int64, sess *s
 		TTSVolume:   0.08,
 		Concurrency: 3,
 	}
+	text := fmt.Sprintf("✅ Selected <b>%d</b> audio file(s) with paired subtitles.\n\nSelect a TTS provider:",
+		len(sess.rjSelectedURLs))
+	msgID, err := b.api.sendMessageGetID(ctx, chatID, text, b.providerKeyboard())
+	if err != nil {
+		log.Printf("tgbot: send rj config message: %v", err)
+	}
+	sess.configMsgID = msgID
 	b.store.set(chatID, sess)
-
-	b.api.sendMessage(ctx, chatID, //nolint:errcheck
-		fmt.Sprintf("✅ Selected <b>%d</b> audio file(s) with paired subtitles.\n\nSelect a TTS provider:",
-			len(sess.rjSelectedURLs)),
-		b.providerKeyboard())
 }
 
 // handleRJSelectAll toggles selection of all subtitled audio files in the
@@ -352,10 +354,15 @@ func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *ses
 	cfg := sess.cfg
 	userID := sess.userID
 	workno := sess.rjWorkno
+	configMsgID := sess.configMsgID
 
 	b.store.reset(chatID)
-	b.api.sendMessage(ctx, chatID, //nolint:errcheck
-		fmt.Sprintf("⏳ Downloading %d audio file(s) and subtitles from asmr.one…", len(pairs)), nil)
+	downloadingMsg := fmt.Sprintf("⏳ Downloading %d audio file(s) and subtitles from asmr.one…", len(pairs))
+	if configMsgID != 0 {
+		b.api.editMessageText(ctx, chatID, configMsgID, downloadingMsg, nil) //nolint:errcheck
+	} else {
+		b.api.sendMessage(ctx, chatID, downloadingMsg, nil) //nolint:errcheck
+	}
 
 	go func() {
 		bgCtx := context.Background()
