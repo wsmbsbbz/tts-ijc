@@ -75,7 +75,7 @@ func (h *JobHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, _ := UserFromContext(r.Context())
-	job, err := h.jobSvc.CreateJob(r.Context(), user.ID, req.AudioKey, req.VTTKey, req.AudioName, req.VTTName, req.ToJobConfig())
+	job, err := h.jobSvc.CreateJob(r.Context(), user.ID, "", req.AudioKey, req.VTTKey, req.AudioName, req.VTTName, req.ToJobConfig())
 	if err != nil {
 		if errors.Is(err, domain.ErrQueueFull) {
 			writeError(w, http.StatusServiceUnavailable, "server is busy, please try again later")
