@@ -192,11 +192,14 @@ func (n *notifier) watchOrdered(ctx context.Context, chatID int64, jobIDs []stri
 	n.api.editMessageText(ctx, chatID, progressMsgID, finalText, nil) //nolint:errcheck
 
 	// Deliver all successful results in order.
+	// Collect completed jobs in order for batch delivery.
+	var completedJobs []domain.Job
 	for i := 0; i < count; i++ {
 		if completed[i] {
-			n.deliver(ctx, chatID, jobs[i])
+			completedJobs = append(completedJobs, jobs[i])
 		}
 	}
+	n.deliverBatch(ctx, chatID, completedJobs, meta)
 }
 
 // watchAndSignal polls a single job and sends updates to the shared channel.
@@ -284,6 +287,84 @@ func (n *notifier) buildFinalText(audioNames []string, completed, failed []bool,
 		}
 	}
 	return sb.String()
+}
+
+// deliverBatch sends all completed jobs as a single Telegram audio media group
+// when there are 2 or more files. For a single file it falls back to deliver().
+// If the batch send fails it falls back to individual deliver() calls.
+func (n *notifier) deliverBatch(ctx context.Context, chatID int64, jobs []domain.Job, meta *WorkMeta) {
+	if len(jobs) == 0 {
+		return
+	}
+	if len(jobs) == 1 {
+		n.deliver(ctx, chatID, jobs[0])
+		return
+	}
+
+	// Batch into groups of 10 (Telegram's sendMediaGroup limit).
+	for start := 0; start < len(jobs); start += 10 {
+		end := start + 10
+		if end > len(jobs) {
+			end = len(jobs)
+		}
+		batch := jobs[start:end]
+		if err := n.sendBatch(ctx, chatID, batch, meta, start == 0); err != nil {
+			log.Printf("tgbot: send batch (start=%d): %v, falling back to individual sends", start, err)
+			for _, job := range batch {
+				n.deliver(ctx, chatID, job)
+			}
+		}
+	}
+}
+
+// sendBatch downloads a slice of jobs to temp files and sends them as one media group.
+// firstBatch indicates whether this is the first batch (caption is added to first item).
+func (n *notifier) sendBatch(ctx context.Context, chatID int64, jobs []domain.Job, meta *WorkMeta, firstBatch bool) error {
+	// Download all outputs to temp files.
+	type tempEntry struct {
+		path     string
+		filename string
+	}
+	entries := make([]tempEntry, 0, len(jobs))
+	cleanup := func() {
+		for _, e := range entries {
+			os.Remove(e.path)
+		}
+	}
+
+	for _, job := range jobs {
+		ext := path.Ext(job.AudioName)
+		base := job.AudioName[:len(job.AudioName)-len(ext)]
+		outputName := base + "_translated.mp3"
+
+		tmp, err := os.CreateTemp("", "tg_batch_*.mp3")
+		if err != nil {
+			cleanup()
+			return fmt.Errorf("create temp: %w", err)
+		}
+		tmpPath := tmp.Name()
+		tmp.Close()
+
+		if err := n.storage.Download(ctx, job.OutputKey, tmpPath); err != nil {
+			os.Remove(tmpPath)
+			cleanup()
+			return fmt.Errorf("download %s: %w", job.ID, err)
+		}
+		entries = append(entries, tempEntry{path: tmpPath, filename: outputName})
+	}
+	defer cleanup()
+
+	// Build localAudio slice.
+	audios := make([]localAudio, len(entries))
+	for i, e := range entries {
+		audios[i] = localAudio{path: e.path, filename: e.filename}
+	}
+	// Set caption on the very first item of the first batch.
+	if firstBatch && meta != nil && meta.Workno != "" {
+		audios[0].caption = fmt.Sprintf("✅ <b>%s</b> — %d file(s)", meta.Workno, len(jobs))
+	}
+
+	return n.api.sendAudioGroupMultipart(ctx, chatID, audios)
 }
 
 func (n *notifier) deliver(ctx context.Context, chatID int64, job domain.Job) {

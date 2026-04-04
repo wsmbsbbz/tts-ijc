@@ -281,6 +281,110 @@ func (a *tgAPI) sendDocumentMultipart(ctx context.Context, chatID int64, localPa
 	return nil
 }
 
+// localAudio is a local file to be sent as part of an audio media group.
+type localAudio struct {
+	path     string
+	filename string
+	caption  string // HTML caption; only used on the first item
+}
+
+// sendAudioGroupMultipart uploads 2–10 local audio files as a single Telegram
+// media group (audio album). Each file is referenced via attach:// in the
+// media JSON and uploaded as a separate multipart part.
+func (a *tgAPI) sendAudioGroupMultipart(ctx context.Context, chatID int64, audios []localAudio) error {
+	if len(audios) < 2 || len(audios) > 10 {
+		return fmt.Errorf("sendAudioGroupMultipart: need 2–10 items, got %d", len(audios))
+	}
+
+	// Open all files first so we can fail early.
+	files := make([]*os.File, len(audios))
+	for i, a := range audios {
+		f, err := os.Open(a.path)
+		if err != nil {
+			// Close any already-opened files.
+			for j := 0; j < i; j++ {
+				files[j].Close()
+			}
+			return fmt.Errorf("open audio %d: %w", i, err)
+		}
+		files[i] = f
+	}
+	defer func() {
+		for _, f := range files {
+			if f != nil {
+				f.Close()
+			}
+		}
+	}()
+
+	// Build the media JSON array.
+	type inputMediaAudio struct {
+		Type      string `json:"type"`
+		Media     string `json:"media"`
+		Caption   string `json:"caption,omitempty"`
+		ParseMode string `json:"parse_mode,omitempty"`
+	}
+	mediaItems := make([]inputMediaAudio, len(audios))
+	for i, a := range audios {
+		item := inputMediaAudio{
+			Type:  "audio",
+			Media: fmt.Sprintf("attach://audio_%d", i),
+		}
+		if a.caption != "" {
+			item.Caption = a.caption
+			item.ParseMode = "HTML"
+		}
+		mediaItems[i] = item
+	}
+	mediaJSON, err := json.Marshal(mediaItems)
+	if err != nil {
+		return fmt.Errorf("marshal media: %w", err)
+	}
+
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	go func() {
+		defer pw.Close()
+		_ = mw.WriteField("chat_id", strconv.FormatInt(chatID, 10))
+		_ = mw.WriteField("media", string(mediaJSON))
+		for i, audio := range audios {
+			fieldName := fmt.Sprintf("audio_%d", i)
+			part, err := mw.CreateFormFile(fieldName, audio.filename)
+			if err != nil {
+				pw.CloseWithError(fmt.Errorf("create form file %d: %w", i, err))
+				return
+			}
+			if _, err := io.Copy(part, files[i]); err != nil {
+				pw.CloseWithError(fmt.Errorf("copy file %d: %w", i, err))
+				return
+			}
+		}
+		mw.Close()
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.methodURL("sendMediaGroup"), pr)
+	if err != nil {
+		pr.CloseWithError(err)
+		return err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var ar apiResp
+	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
+		return fmt.Errorf("decode: %w", err)
+	}
+	if !ar.OK {
+		return fmt.Errorf("telegram api [%d]: %s", ar.ErrorCode, ar.Description)
+	}
+	return nil
+}
+
 // sendPhoto sends a photo by URL with an HTML caption and returns the message ID.
 func (a *tgAPI) sendPhoto(ctx context.Context, chatID int64, photoURL, caption string, keyboard *InlineKeyboardMarkup) (int, error) {
 	payload := map[string]any{
