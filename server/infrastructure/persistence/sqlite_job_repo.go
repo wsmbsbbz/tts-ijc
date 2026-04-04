@@ -75,6 +75,7 @@ func migrateTable(db *sql.DB) error {
 		"ALTER TABLE jobs ADD COLUMN vtt_name    TEXT    NOT NULL DEFAULT ''",
 		"ALTER TABLE jobs ADD COLUMN user_id     TEXT    NOT NULL DEFAULT ''",
 		"ALTER TABLE jobs ADD COLUMN output_size INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE jobs ADD COLUMN task_id     TEXT    NOT NULL DEFAULT ''",
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return fmt.Errorf("migrate: %w", err)
@@ -90,13 +91,13 @@ func (r *SQLiteJobRepo) Close() error {
 
 func (r *SQLiteJobRepo) Save(ctx context.Context, job domain.Job) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO jobs (id, user_id, status, progress, audio_key, vtt_key, output_key,
+		INSERT INTO jobs (id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		                  audio_name, vtt_name,
 		                  tts_provider, tts_volume, no_speedup, concurrency,
 		                  created_at, completed_at, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		job.ID, job.UserID, string(job.Status), job.Progress,
+		job.ID, job.UserID, job.TaskID, string(job.Status), job.Progress,
 		job.AudioKey, job.VTTKey, job.OutputKey,
 		job.AudioName, job.VTTName,
 		job.Config.TTSProvider, job.Config.TTSVolume,
@@ -113,7 +114,7 @@ func (r *SQLiteJobRepo) Save(ctx context.Context, job domain.Job) error {
 
 func (r *SQLiteJobRepo) FindByID(ctx context.Context, id string) (domain.Job, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
+		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       output_size, created_at, completed_at, error
@@ -124,7 +125,7 @@ func (r *SQLiteJobRepo) FindByID(ctx context.Context, id string) (domain.Job, er
 
 func (r *SQLiteJobRepo) ListRecent(ctx context.Context, userID string, limit int) ([]domain.Job, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
+		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       output_size, created_at, completed_at, error
@@ -132,6 +133,30 @@ func (r *SQLiteJobRepo) ListRecent(ctx context.Context, userID string, limit int
 	`, userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []domain.Job
+	for rows.Next() {
+		job, err := scanJobRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
+func (r *SQLiteJobRepo) ListByTask(ctx context.Context, taskID string) ([]domain.Job, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
+		       audio_name, vtt_name,
+		       tts_provider, tts_volume, no_speedup, concurrency,
+		       output_size, created_at, completed_at, error
+		FROM jobs WHERE task_id = ? ORDER BY created_at ASC
+	`, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("list jobs by task: %w", err)
 	}
 	defer rows.Close()
 
@@ -174,7 +199,7 @@ func (r *SQLiteJobRepo) DeleteExpired(ctx context.Context, ttl time.Duration) ([
 
 	// First read the expired jobs so we can return them for R2 cleanup.
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
+		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       output_size, created_at, completed_at, error
@@ -226,7 +251,7 @@ func scanJob(s scanner) (domain.Job, error) {
 	)
 
 	err := s.Scan(
-		&j.ID, &j.UserID, &status, &j.Progress,
+		&j.ID, &j.UserID, &j.TaskID, &status, &j.Progress,
 		&j.AudioKey, &j.VTTKey, &j.OutputKey,
 		&j.AudioName, &j.VTTName,
 		&j.Config.TTSProvider, &j.Config.TTSVolume,

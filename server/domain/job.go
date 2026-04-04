@@ -23,6 +23,7 @@ type JobConfig struct {
 // Job is the core domain entity representing a translation task.
 type Job struct {
 	ID          string
+	TaskID      string // groups jobs created from the same user action
 	UserID      string
 	Status      Status
 	Progress    string
@@ -39,7 +40,7 @@ type Job struct {
 }
 
 // NewJob creates a Job in queued state with sensible defaults.
-func NewJob(id, userID, audioKey, vttKey, audioName, vttName string, cfg JobConfig) Job {
+func NewJob(id, userID, taskID, audioKey, vttKey, audioName, vttName string, cfg JobConfig) Job {
 	if cfg.TTSProvider == "" {
 		cfg.TTSProvider = "edge"
 	}
@@ -52,6 +53,7 @@ func NewJob(id, userID, audioKey, vttKey, audioName, vttName string, cfg JobConf
 
 	return Job{
 		ID:        id,
+		TaskID:    taskID,
 		UserID:    userID,
 		Status:    StatusQueued,
 		AudioKey:  audioKey,
