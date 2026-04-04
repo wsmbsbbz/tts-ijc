@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-const baseURL = "https://api.asmr.one"
+const (
+	baseURL    = "https://api.asmr.one"
+	baseURL200 = "https://api.asmr-200.com"
+)
 
 // Client is an HTTP client for the asmr.one API.
 type Client struct {
@@ -73,6 +76,28 @@ func (c *Client) GetWorkInfo(ctx context.Context, workno string) (*WorkInfo, err
 		return nil, fmt.Errorf("get work info: %w", err)
 	}
 	return &info, nil
+}
+
+// GetWorkInfoRich fetches rich metadata from the asmr-200 mirror API, which
+// returns additional fields (voice actors, tags, circle, cover URLs) compared
+// to the primary asmr.one endpoint.
+func (c *Client) GetWorkInfoRich(ctx context.Context, workno string) (*WorkInfo, error) {
+	id := normalizeID(workno)
+	url := fmt.Sprintf("%s/api/workInfo/%s", baseURL200, id)
+	req, err := c.newRequest(ctx, http.MethodGet, url)
+	if err != nil {
+		return nil, err
+	}
+	var info WorkInfo
+	if err := c.do(req, &info); err != nil {
+		return nil, fmt.Errorf("get work info (rich): %w", err)
+	}
+	return &info, nil
+}
+
+// CoverURL returns the cover image URL for the given numeric work ID.
+func CoverURL(numericID int) string {
+	return fmt.Sprintf("%s/api/cover/%d.jpg", baseURL200, numericID)
 }
 
 // GetTracks fetches the full file tree for the given RJ work. Requires a valid token.

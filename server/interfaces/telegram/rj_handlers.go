@@ -85,11 +85,16 @@ func (b *BotServer) fetchAndStartRJBrowse(ctx context.Context, chatID int64, ses
 
 	client := asmrone.NewClient(token)
 
-	info, err := client.GetWorkInfo(ctx, workno)
+	// Fetch rich metadata (includes VAs, tags, circle, cover URLs).
+	info, err := client.GetWorkInfoRich(ctx, workno)
 	if err != nil {
-		b.api.sendMessage(ctx, chatID, "❌ "+err.Error(), nil) //nolint:errcheck
-		b.store.reset(chatID)
-		return
+		// Fallback to basic endpoint if rich one fails.
+		info, err = client.GetWorkInfo(ctx, workno)
+		if err != nil {
+			b.api.sendMessage(ctx, chatID, "❌ "+err.Error(), nil) //nolint:errcheck
+			b.store.reset(chatID)
+			return
+		}
 	}
 	if !info.HasSubtitle {
 		b.api.sendMessage(ctx, chatID, //nolint:errcheck
@@ -109,6 +114,7 @@ func (b *BotServer) fetchAndStartRJBrowse(ctx context.Context, chatID int64, ses
 	sess.rjMode = true
 	sess.rjWorkno = strings.ToUpper(workno)
 	sess.rjWorkTitle = info.Title
+	sess.rjWorkInfo = info
 	sess.rjAsmrToken = token
 	sess.rjPath = nil
 	sess.rjDirStack = nil
@@ -354,6 +360,7 @@ func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *ses
 	cfg := sess.cfg
 	userID := sess.userID
 	workno := sess.rjWorkno
+	workInfo := sess.rjWorkInfo
 	configMsgID := sess.configMsgID
 
 	b.store.reset(chatID)
@@ -364,10 +371,40 @@ func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *ses
 		b.api.sendMessage(ctx, chatID, downloadingMsg, nil) //nolint:errcheck
 	}
 
+	// Build work metadata for the notifier.
+	var meta *WorkMeta
+	if workInfo != nil {
+		meta = &WorkMeta{
+			Workno:   workno,
+			Title:    workInfo.Title,
+			Circle:   workInfo.CircleInfo.Name,
+			CoverURL: asmrone.CoverURL(workInfo.ID),
+		}
+		if meta.Circle == "" {
+			meta.Circle = workInfo.Name
+		}
+		for _, va := range workInfo.VAs {
+			meta.VAs = append(meta.VAs, va.Name)
+		}
+		for _, tag := range workInfo.Tags {
+			meta.Tags = append(meta.Tags, tag.Name)
+		}
+	}
+
 	go func() {
 		bgCtx := context.Background()
 
+		// Send cover photo with metadata at the start.
+		if meta != nil && meta.CoverURL != "" {
+			caption := buildMetaCaption(meta)
+			if _, err := b.api.sendPhoto(bgCtx, chatID, meta.CoverURL, caption, nil); err != nil {
+				log.Printf("tgbot: send cover photo: %v, sending text instead", err)
+				b.api.sendMessage(bgCtx, chatID, caption, nil) //nolint:errcheck
+			}
+		}
+
 		var jobIDs []string
+		var audioNames []string
 		for _, pair := range pairs {
 			vttKey, err := b.downloadFromAsmrOne(bgCtx, token, pair.VTT.MediaDownloadURL, userID, pair.VTT.Title)
 			if err != nil {
@@ -396,22 +433,15 @@ func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *ses
 				continue
 			}
 			jobIDs = append(jobIDs, job.ID)
+			audioNames = append(audioNames, pair.Audio.Title)
 		}
 
 		if len(jobIDs) == 0 {
 			return
 		}
 
-		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("✅ Queued <b>%d</b> job(s) from <code>%s</code>!\n\n", len(jobIDs), workno))
-		for i, id := range jobIDs {
-			sb.WriteString(fmt.Sprintf("%d. <code>%s</code>\n", i+1, id))
-		}
-		sb.WriteString("\nI'll notify you as each one finishes.")
-		b.api.sendMessage(bgCtx, chatID, sb.String(), nil) //nolint:errcheck
-
-		// Deliver completion notifications in the original (alphabetical) order.
-		b.notifier.watchOrdered(bgCtx, chatID, jobIDs)
+		// The notifier now handles progress messages and delivery.
+		b.notifier.watchOrdered(bgCtx, chatID, jobIDs, audioNames, meta)
 	}()
 }
 
@@ -455,6 +485,25 @@ func (b *BotServer) downloadFromAsmrOne(ctx context.Context, token, downloadURL,
 		return "", fmt.Errorf("upload to r2: %w", err)
 	}
 	return key, nil
+}
+
+// buildMetaCaption renders work metadata as an HTML caption for the cover photo.
+func buildMetaCaption(meta *WorkMeta) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("<b>%s</b>\n", meta.Workno))
+	if meta.Title != "" {
+		sb.WriteString(fmt.Sprintf("📝 %s\n", meta.Title))
+	}
+	if meta.Circle != "" {
+		sb.WriteString(fmt.Sprintf("🏢 %s\n", meta.Circle))
+	}
+	if len(meta.VAs) > 0 {
+		sb.WriteString(fmt.Sprintf("🎤 %s\n", strings.Join(meta.VAs, ", ")))
+	}
+	if len(meta.Tags) > 0 {
+		sb.WriteString(fmt.Sprintf("🏷 %s", strings.Join(meta.Tags, ", ")))
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 // --- Helpers ---

@@ -5,13 +5,37 @@ import (
 	"strings"
 )
 
+// VoiceActor represents a voice actor credited on a work.
+type VoiceActor struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Tag represents a content tag on a work.
+type Tag struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// Circle represents the creator circle/group of a work.
+type Circle struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
 // WorkInfo contains metadata for an asmr.one work.
 type WorkInfo struct {
-	ID          int    `json:"id"`
-	Title       string `json:"title"`
-	Name        string `json:"name"`         // circle/creator name
-	SourceID    string `json:"source_id"`    // e.g. "RJ299717"
-	HasSubtitle bool   `json:"has_subtitle"` // true when the work ships .vtt files
+	ID                int          `json:"id"`
+	Title             string       `json:"title"`
+	Name              string       `json:"name"`              // circle/creator name (flat)
+	SourceID          string       `json:"source_id"`         // e.g. "RJ299717"
+	HasSubtitle       bool         `json:"has_subtitle"`      // true when the work ships .vtt files
+	CircleInfo        Circle       `json:"circle"`            // structured circle info
+	VAs               []VoiceActor `json:"vas"`               // voice actors
+	Tags              []Tag        `json:"tags"`              // content tags
+	MainCoverURL      string       `json:"mainCoverUrl"`      // full-size cover
+	SamCoverURL       string       `json:"samCoverUrl"`       // small cover
+	ThumbnailCoverURL string       `json:"thumbnailCoverUrl"` // 240x240 thumbnail
 }
 
 // Track represents a file or folder in an asmr.one work's file tree.
