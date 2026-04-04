@@ -426,7 +426,8 @@ func (b *BotServer) downloadFromAsmrOne(ctx context.Context, token, downloadURL,
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := b.httpClient.Do(req)
+	// Use a client without a timeout for large file downloads — rely on ctx for cancellation.
+	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("download: %w", err)
 	}
