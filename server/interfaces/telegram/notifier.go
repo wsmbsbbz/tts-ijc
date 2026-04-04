@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 	"path"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/wsmbsbbz/tts-ijc/server/application"
@@ -15,7 +17,18 @@ import (
 const (
 	pollInterval      = 5 * time.Second
 	downloadURLExpiry = 24 * time.Hour
+	editDebounce      = 3 * time.Second // minimum interval between message edits
 )
+
+// WorkMeta holds work metadata passed from the RJ handler to the notifier.
+type WorkMeta struct {
+	Workno   string
+	Title    string
+	Circle   string
+	VAs      []string
+	Tags     []string
+	CoverURL string
+}
 
 type notifier struct {
 	api         *tgAPI
@@ -24,13 +37,19 @@ type notifier struct {
 	maxSendSize int64
 }
 
-// watch polls jobID every 5 seconds until it reaches a terminal state,
-// sending progress and result messages to chatID via Telegram.
+// watch polls jobID every 5 seconds until it reaches a terminal state.
+// Progress updates edit a single message in-place instead of sending new messages.
 func (n *notifier) watch(ctx context.Context, chatID int64, jobID string) {
+	msgID, err := n.api.sendMessageGetID(ctx, chatID, "⏳ Queued…", nil)
+	if err != nil {
+		log.Printf("tgbot: send initial progress msg: %v", err)
+		return
+	}
+
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
-	var lastProgress string
+	var lastText string
 	for {
 		select {
 		case <-ctx.Done():
@@ -42,15 +61,9 @@ func (n *notifier) watch(ctx context.Context, chatID int64, jobID string) {
 				continue
 			}
 
-			if job.Progress != lastProgress && job.Progress != "" {
-				lastProgress = job.Progress
-				if err := n.api.sendMessage(ctx, chatID, "⏳ "+job.Progress, nil); err != nil {
-					log.Printf("tgbot: send progress: %v", err)
-				}
-			}
-
 			switch job.Status {
 			case domain.StatusCompleted:
+				n.api.editMessageText(ctx, chatID, msgID, "✅ Completed!", nil) //nolint:errcheck
 				n.deliver(ctx, chatID, job)
 				return
 			case domain.StatusFailed:
@@ -58,43 +71,136 @@ func (n *notifier) watch(ctx context.Context, chatID int64, jobID string) {
 				if job.Error != nil {
 					msg = *job.Error
 				}
-				n.api.sendMessage(ctx, chatID, "❌ Job failed: "+msg, nil) //nolint:errcheck
+				n.api.editMessageText(ctx, chatID, msgID, "❌ Job failed: "+msg, nil) //nolint:errcheck
 				return
+			default:
+				if job.Progress != "" && job.Progress != lastText {
+					lastText = job.Progress
+					text := "⏳ " + job.Progress
+					n.api.editMessageText(ctx, chatID, msgID, text, nil) //nolint:errcheck
+				}
 			}
 		}
 	}
 }
 
-// jobCompletion carries the terminal result of a single job for ordered delivery.
-type jobCompletion struct {
-	job    domain.Job
-	failed bool
-	errMsg string
+// progressUpdate carries a status change from a watcher goroutine to the
+// consolidated progress renderer.
+type progressUpdate struct {
+	index    int
+	progress string // latest progress text (empty if terminal)
+	done     bool
+	failed   bool
+	errMsg   string
+	job      domain.Job
 }
 
-// watchOrdered watches multiple jobs in parallel (sending progress as each
-// advances) and delivers completion notifications in the original jobIDs order.
-func (n *notifier) watchOrdered(ctx context.Context, chatID int64, jobIDs []string) {
-	completions := make([]chan jobCompletion, len(jobIDs))
-	for i := range completions {
-		completions[i] = make(chan jobCompletion, 1)
+// watchOrdered watches multiple jobs in parallel, consolidating all progress
+// into a single editable message. After all jobs finish, delivers all
+// successful results in original order.
+func (n *notifier) watchOrdered(ctx context.Context, chatID int64, jobIDs []string, audioNames []string, meta *WorkMeta) {
+	count := len(jobIDs)
+
+	// Send initial consolidated progress message.
+	initText := n.buildProgressText(audioNames, make([]string, count), make([]bool, count), make([]bool, count), make([]string, count), meta)
+	progressMsgID, err := n.api.sendMessageGetID(ctx, chatID, initText, nil)
+	if err != nil {
+		log.Printf("tgbot: send initial progress: %v", err)
+		return
 	}
+
+	// Channel for progress updates from all watchers.
+	updates := make(chan progressUpdate, count*2)
+
+	// Launch watchers.
 	for i, jobID := range jobIDs {
-		go n.watchAndSignal(ctx, chatID, jobID, completions[i])
+		go n.watchAndSignal(ctx, jobID, i, updates)
 	}
-	for _, ch := range completions {
-		result := <-ch
-		if result.failed {
-			n.api.sendMessage(ctx, chatID, "❌ Job failed: "+result.errMsg, nil) //nolint:errcheck
+
+	// Track per-job state.
+	progresses := make([]string, count) // latest progress text per job
+	completed := make([]bool, count)
+	failed := make([]bool, count)
+	errMsgs := make([]string, count)
+	jobs := make([]domain.Job, count) // terminal jobs (for delivery)
+	doneCount := 0
+
+	// Debounce timer for edits.
+	var editTimer *time.Timer
+	var editPending bool
+	var mu sync.Mutex
+
+	flushEdit := func() {
+		mu.Lock()
+		editPending = false
+		mu.Unlock()
+		text := n.buildProgressText(audioNames, progresses, completed, failed, errMsgs, meta)
+		n.api.editMessageText(ctx, chatID, progressMsgID, text, nil) //nolint:errcheck
+	}
+
+	scheduleEdit := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if editPending {
+			return
+		}
+		editPending = true
+		if editTimer == nil {
+			editTimer = time.AfterFunc(editDebounce, flushEdit)
 		} else {
-			n.deliver(ctx, chatID, result.job)
+			editTimer.Reset(editDebounce)
+		}
+	}
+
+	for doneCount < count {
+		select {
+		case <-ctx.Done():
+			return
+		case u := <-updates:
+			if u.done || u.failed {
+				completed[u.index] = u.done
+				failed[u.index] = u.failed
+				errMsgs[u.index] = u.errMsg
+				if u.done {
+					jobs[u.index] = u.job
+				}
+				doneCount++
+				// Immediately flush on terminal events.
+				if editTimer != nil {
+					editTimer.Stop()
+				}
+				flushEdit()
+			} else {
+				progresses[u.index] = u.progress
+				scheduleEdit()
+			}
+		}
+	}
+
+	if editTimer != nil {
+		editTimer.Stop()
+	}
+
+	// Build final summary.
+	successCount := 0
+	for _, c := range completed {
+		if c {
+			successCount++
+		}
+	}
+	finalText := n.buildFinalText(audioNames, completed, failed, errMsgs, meta, successCount, count)
+	n.api.editMessageText(ctx, chatID, progressMsgID, finalText, nil) //nolint:errcheck
+
+	// Deliver all successful results in order.
+	for i := 0; i < count; i++ {
+		if completed[i] {
+			n.deliver(ctx, chatID, jobs[i])
 		}
 	}
 }
 
-// watchAndSignal is like watch but sends the terminal result to done instead of
-// delivering it directly, so the caller can sequence deliveries.
-func (n *notifier) watchAndSignal(ctx context.Context, chatID int64, jobID string, done chan<- jobCompletion) {
+// watchAndSignal polls a single job and sends updates to the shared channel.
+func (n *notifier) watchAndSignal(ctx context.Context, jobID string, index int, updates chan<- progressUpdate) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
@@ -102,7 +208,7 @@ func (n *notifier) watchAndSignal(ctx context.Context, chatID int64, jobID strin
 	for {
 		select {
 		case <-ctx.Done():
-			done <- jobCompletion{failed: true, errMsg: "context cancelled"}
+			updates <- progressUpdate{index: index, failed: true, errMsg: "context cancelled"}
 			return
 		case <-ticker.C:
 			job, err := n.jobSvc.GetJob(ctx, jobID)
@@ -113,25 +219,71 @@ func (n *notifier) watchAndSignal(ctx context.Context, chatID int64, jobID strin
 
 			if job.Progress != lastProgress && job.Progress != "" {
 				lastProgress = job.Progress
-				if err := n.api.sendMessage(ctx, chatID, "⏳ "+job.Progress, nil); err != nil {
-					log.Printf("tgbot: send progress: %v", err)
-				}
+				updates <- progressUpdate{index: index, progress: job.Progress}
 			}
 
 			switch job.Status {
 			case domain.StatusCompleted:
-				done <- jobCompletion{job: job}
+				updates <- progressUpdate{index: index, done: true, job: job}
 				return
 			case domain.StatusFailed:
 				msg := "unknown error"
 				if job.Error != nil {
 					msg = *job.Error
 				}
-				done <- jobCompletion{failed: true, errMsg: msg}
+				updates <- progressUpdate{index: index, failed: true, errMsg: msg}
 				return
 			}
 		}
 	}
+}
+
+// buildProgressText renders the consolidated progress message.
+func (n *notifier) buildProgressText(audioNames, progresses []string, completed, failed []bool, errMsgs []string, meta *WorkMeta) string {
+	var sb strings.Builder
+	label := ""
+	if meta != nil {
+		label = " from " + meta.Workno
+	}
+	sb.WriteString(fmt.Sprintf("⚙️ Processing %d job(s)%s\n", len(audioNames), label))
+
+	for i, name := range audioNames {
+		sb.WriteByte('\n')
+		if completed[i] {
+			sb.WriteString(fmt.Sprintf("%d. ✅ %s", i+1, name))
+		} else if failed[i] {
+			sb.WriteString(fmt.Sprintf("%d. ❌ %s — %s", i+1, name, errMsgs[i]))
+		} else if progresses[i] != "" {
+			sb.WriteString(fmt.Sprintf("%d. ⏳ %s — %s", i+1, name, progresses[i]))
+		} else {
+			sb.WriteString(fmt.Sprintf("%d. 🕐 %s — queued", i+1, name))
+		}
+	}
+	return sb.String()
+}
+
+// buildFinalText renders the final summary after all jobs complete.
+func (n *notifier) buildFinalText(audioNames []string, completed, failed []bool, errMsgs []string, meta *WorkMeta, successCount, total int) string {
+	var sb strings.Builder
+
+	label := ""
+	if meta != nil {
+		label = meta.Workno + " — "
+	}
+	sb.WriteString(fmt.Sprintf("✅ %s%d/%d completed\n", label, successCount, total))
+
+	for i, name := range audioNames {
+		sb.WriteByte('\n')
+		ext := path.Ext(name)
+		base := name[:len(name)-len(ext)]
+		outputName := base + "_translated.mp3"
+		if completed[i] {
+			sb.WriteString(fmt.Sprintf("%d. ✅ %s", i+1, outputName))
+		} else if failed[i] {
+			sb.WriteString(fmt.Sprintf("%d. ❌ %s — %s", i+1, name, errMsgs[i]))
+		}
+	}
+	return sb.String()
 }
 
 func (n *notifier) deliver(ctx context.Context, chatID int64, job domain.Job) {
@@ -139,9 +291,7 @@ func (n *notifier) deliver(ctx context.Context, chatID int64, job domain.Job) {
 	base := job.AudioName[:len(job.AudioName)-len(ext)]
 	outputName := base + "_translated.mp3"
 
-	// Always try to send the file directly via multipart upload.
-	// This works with both the official API (≤50 MB) and the local server (≤2 GB).
-	caption := fmt.Sprintf("✅ Done! <b>%s</b>", outputName)
+	caption := fmt.Sprintf("✅ <b>%s</b>", outputName)
 	if err := n.sendDirect(ctx, chatID, job, outputName, caption); err != nil {
 		log.Printf("tgbot: direct send for job %s: %v, falling back to link", job.ID, err)
 	} else {

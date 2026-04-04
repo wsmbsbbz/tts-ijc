@@ -57,6 +57,7 @@ type session struct {
 	rjCurrentDir   []asmrone.Track                     // items in current view
 	rjSelectedURLs map[string]asmrone.AudioVTTPair     // selected audio: URL → AudioVTTPair
 	rjMenuMsgID    int                                 // message ID of the current selection keyboard
+	rjWorkInfo     *asmrone.WorkInfo                   // rich metadata (cover, VAs, tags, circle)
 }
 
 type stateStore struct {

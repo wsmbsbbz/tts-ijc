@@ -281,6 +281,52 @@ func (a *tgAPI) sendDocumentMultipart(ctx context.Context, chatID int64, localPa
 	return nil
 }
 
+// sendPhoto sends a photo by URL with an HTML caption and returns the message ID.
+func (a *tgAPI) sendPhoto(ctx context.Context, chatID int64, photoURL, caption string, keyboard *InlineKeyboardMarkup) (int, error) {
+	payload := map[string]any{
+		"chat_id":    chatID,
+		"photo":      photoURL,
+		"caption":    caption,
+		"parse_mode": "HTML",
+	}
+	if keyboard != nil {
+		payload["reply_markup"] = keyboard
+	}
+	result, err := a.call(ctx, "sendPhoto", payload)
+	if err != nil {
+		return 0, err
+	}
+	var msg Message
+	if err := json.Unmarshal(result, &msg); err != nil {
+		return 0, fmt.Errorf("parse sent photo: %w", err)
+	}
+	return msg.MessageID, nil
+}
+
+// editMessageCaption edits the caption of a photo/document message.
+func (a *tgAPI) editMessageCaption(ctx context.Context, chatID int64, messageID int, caption string, keyboard *InlineKeyboardMarkup) error {
+	payload := map[string]any{
+		"chat_id":    chatID,
+		"message_id": messageID,
+		"caption":    caption,
+		"parse_mode": "HTML",
+	}
+	if keyboard != nil {
+		payload["reply_markup"] = keyboard
+	}
+	_, err := a.call(ctx, "editMessageCaption", payload)
+	return err
+}
+
+// deleteMessage deletes a message from the chat.
+func (a *tgAPI) deleteMessage(ctx context.Context, chatID int64, messageID int) error {
+	_, err := a.call(ctx, "deleteMessage", map[string]any{
+		"chat_id":    chatID,
+		"message_id": messageID,
+	})
+	return err
+}
+
 // BotCommand represents a single slash command shown in the Telegram menu.
 type BotCommand struct {
 	Command     string `json:"command"`

@@ -315,6 +315,12 @@ func (b *BotServer) handleStatus(ctx context.Context, chatID int64, userID, jobI
 }
 
 func (b *BotServer) handleJobs(ctx context.Context, chatID int64, userID string) {
+	b.sendJobsView(ctx, chatID, userID, 0)
+}
+
+// sendJobsView renders the grouped jobs view. If editMsgID > 0, edits that message;
+// otherwise sends a new one.
+func (b *BotServer) sendJobsView(ctx context.Context, chatID int64, userID string, editMsgID int) {
 	if userID == "" {
 		b.api.sendMessage(ctx, chatID, "Use /new to start a job first.", nil) //nolint:errcheck
 		return
@@ -324,37 +330,76 @@ func (b *BotServer) handleJobs(ctx context.Context, chatID int64, userID string)
 		b.api.sendMessage(ctx, chatID, "Failed to retrieve jobs.", nil) //nolint:errcheck
 		return
 	}
-
-	var completed []domain.Job
-	for _, j := range jobs {
-		if j.Status == domain.StatusCompleted {
-			completed = append(completed, j)
-		}
-	}
-	if len(completed) == 0 {
-		b.api.sendMessage(ctx, chatID, "No completed jobs found.", nil) //nolint:errcheck
+	if len(jobs) == 0 {
+		b.api.sendMessage(ctx, chatID, "No jobs found. Use /new or /rj to create one.", nil) //nolint:errcheck
 		return
 	}
 
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("<b>Completed jobs (%d):</b>\n", len(completed)))
-
-	var rows [][]InlineKeyboardButton
-	for _, j := range completed {
-		completedAt := ""
-		if j.CompletedAt != nil {
-			completedAt = j.CompletedAt.Format("2006-01-02 15:04")
+	// Group jobs by status.
+	var processing, completed, failed []domain.Job
+	for _, j := range jobs {
+		switch j.Status {
+		case domain.StatusQueued, domain.StatusProcessing:
+			processing = append(processing, j)
+		case domain.StatusCompleted:
+			completed = append(completed, j)
+		case domain.StatusFailed:
+			failed = append(failed, j)
 		}
-		sb.WriteString(fmt.Sprintf("\n<code>%s</code>  %s\n%s | provider: %s\n",
-			j.ID[:8], completedAt, j.AudioName, j.Config.TTSProvider))
-
-		rows = append(rows, []InlineKeyboardButton{
-			{Text: fmt.Sprintf("📥 %s", j.AudioName), CallbackData: "dl:" + j.ID},
-		})
 	}
 
+	var sb strings.Builder
+	sb.WriteString("<b>📊 Your Jobs</b>\n")
+
+	var rows [][]InlineKeyboardButton
+
+	if len(processing) > 0 {
+		sb.WriteString(fmt.Sprintf("\n<b>⚙️ Processing (%d):</b>\n", len(processing)))
+		for _, j := range processing {
+			status := "queued"
+			if j.Status == domain.StatusProcessing && j.Progress != "" {
+				status = j.Progress
+			}
+			sb.WriteString(fmt.Sprintf("  • %s — %s\n", j.AudioName, status))
+		}
+	}
+
+	if len(completed) > 0 {
+		sb.WriteString(fmt.Sprintf("\n<b>✅ Completed (%d):</b>\n", len(completed)))
+		for _, j := range completed {
+			completedAt := ""
+			if j.CompletedAt != nil {
+				completedAt = j.CompletedAt.Format("2006-01-02 15:04")
+			}
+			sb.WriteString(fmt.Sprintf("  • %s  %s\n", j.AudioName, completedAt))
+			rows = append(rows, []InlineKeyboardButton{
+				{Text: fmt.Sprintf("📥 %s", j.AudioName), CallbackData: "dl:" + j.ID},
+			})
+		}
+	}
+
+	if len(failed) > 0 {
+		sb.WriteString(fmt.Sprintf("\n<b>❌ Failed (%d):</b>\n", len(failed)))
+		for _, j := range failed {
+			errMsg := ""
+			if j.Error != nil {
+				errMsg = " — " + *j.Error
+			}
+			sb.WriteString(fmt.Sprintf("  • %s%s\n", j.AudioName, errMsg))
+		}
+	}
+
+	// Refresh button.
+	rows = append(rows, []InlineKeyboardButton{
+		{Text: "🔄 Refresh", CallbackData: "jobs:refresh"},
+	})
 	kb := &InlineKeyboardMarkup{InlineKeyboard: rows}
-	b.api.sendMessage(ctx, chatID, sb.String(), kb) //nolint:errcheck
+
+	if editMsgID > 0 {
+		b.api.editMessageText(ctx, chatID, editMsgID, sb.String(), kb) //nolint:errcheck
+	} else {
+		b.api.sendMessage(ctx, chatID, sb.String(), kb) //nolint:errcheck
+	}
 }
 
 func (b *BotServer) handleBind(ctx context.Context, chatID int64, tgUserID int64, currentUserID, args string) {
@@ -668,6 +713,8 @@ func (b *BotServer) handleCallback(ctx context.Context, cq *CallbackQuery) {
 		b.handleSpeedupCallback(ctx, chatID, sess, strings.TrimPrefix(data, "speedup:"))
 	case strings.HasPrefix(data, "dl:"):
 		b.handleDownloadCallback(ctx, chatID, sess.userID, strings.TrimPrefix(data, "dl:"))
+	case data == "jobs:refresh":
+		b.sendJobsView(ctx, chatID, sess.userID, cq.Message.MessageID)
 	case data == "confirm":
 		b.handleConfirm(ctx, chatID, sess)
 	case data == "cancel_job":
