@@ -305,11 +305,9 @@ func (b *BotServer) handleRJDoneAudio(ctx context.Context, chatID int64, sess *s
 	}
 	text := fmt.Sprintf("✅ Selected <b>%d</b> audio file(s) with paired subtitles.\n\nSelect a TTS provider:",
 		len(sess.rjSelectedURLs))
-	msgID, err := b.api.sendMessageGetID(ctx, chatID, text, b.providerKeyboard())
-	if err != nil {
-		log.Printf("tgbot: send rj config message: %v", err)
-	}
-	sess.configMsgID = msgID
+	// Reuse the browse message rather than sending a new one.
+	b.api.editMessageText(ctx, chatID, sess.rjMenuMsgID, text, b.providerKeyboard()) //nolint:errcheck
+	sess.configMsgID = sess.rjMenuMsgID
 	b.store.set(chatID, sess)
 }
 
