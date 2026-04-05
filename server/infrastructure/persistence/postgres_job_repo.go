@@ -74,6 +74,7 @@ func migratePostgresTable(db *sql.DB) error {
 		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS vtt_name   TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS user_id     TEXT   NOT NULL DEFAULT ''",
 		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS output_size BIGINT NOT NULL DEFAULT 0",
+		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS task_id     TEXT   NOT NULL DEFAULT ''",
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "already exists") {
 			return fmt.Errorf("migrate: %w", err)
@@ -89,13 +90,13 @@ func (r *PostgresJobRepo) Close() error {
 
 func (r *PostgresJobRepo) Save(ctx context.Context, job domain.Job) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO jobs (id, user_id, status, progress, audio_key, vtt_key, output_key,
+		INSERT INTO jobs (id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		                  audio_name, vtt_name,
 		                  tts_provider, tts_volume, no_speedup, concurrency,
 		                  created_at, completed_at, error)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 	`,
-		job.ID, job.UserID, string(job.Status), job.Progress,
+		job.ID, job.UserID, job.TaskID, string(job.Status), job.Progress,
 		job.AudioKey, job.VTTKey, job.OutputKey,
 		job.AudioName, job.VTTName,
 		job.Config.TTSProvider, job.Config.TTSVolume,
@@ -111,7 +112,7 @@ func (r *PostgresJobRepo) Save(ctx context.Context, job domain.Job) error {
 
 func (r *PostgresJobRepo) FindByID(ctx context.Context, id string) (domain.Job, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
+		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       output_size, created_at, completed_at, error
@@ -122,7 +123,7 @@ func (r *PostgresJobRepo) FindByID(ctx context.Context, id string) (domain.Job, 
 
 func (r *PostgresJobRepo) ListRecent(ctx context.Context, userID string, limit int) ([]domain.Job, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
+		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       output_size, created_at, completed_at, error
@@ -130,6 +131,30 @@ func (r *PostgresJobRepo) ListRecent(ctx context.Context, userID string, limit i
 	`, userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []domain.Job
+	for rows.Next() {
+		job, err := scanPgJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
+func (r *PostgresJobRepo) ListByTask(ctx context.Context, taskID string) ([]domain.Job, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
+		       audio_name, vtt_name,
+		       tts_provider, tts_volume, no_speedup, concurrency,
+		       output_size, created_at, completed_at, error
+		FROM jobs WHERE task_id = $1 ORDER BY created_at ASC
+	`, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("list jobs by task: %w", err)
 	}
 	defer rows.Close()
 
@@ -169,7 +194,7 @@ func (r *PostgresJobRepo) DeleteExpired(ctx context.Context, ttl time.Duration) 
 	cutoff := time.Now().Add(-ttl)
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, user_id, status, progress, audio_key, vtt_key, output_key,
+		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
 		       tts_provider, tts_volume, no_speedup, concurrency,
 		       output_size, created_at, completed_at, error
@@ -215,7 +240,7 @@ func scanPgJob(s scanner) (domain.Job, error) {
 	)
 
 	err := s.Scan(
-		&j.ID, &j.UserID, &status, &j.Progress,
+		&j.ID, &j.UserID, &j.TaskID, &status, &j.Progress,
 		&j.AudioKey, &j.VTTKey, &j.OutputKey,
 		&j.AudioName, &j.VTTName,
 		&j.Config.TTSProvider, &j.Config.TTSVolume,

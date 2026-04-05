@@ -392,6 +392,21 @@ func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *ses
 	go func() {
 		bgCtx := context.Background()
 
+		// Create a task to group all jobs from this RJ work.
+		taskID := ""
+		if b.cfg.TaskSvc != nil {
+			taskTitle := workno
+			if workInfo != nil && workInfo.Title != "" {
+				taskTitle = workInfo.Title
+			}
+			t, terr := b.cfg.TaskSvc.CreateTask(bgCtx, userID, domain.TaskSourceRJ, taskTitle, workno)
+			if terr != nil {
+				log.Printf("tgbot: create rj task for chat %d: %v", chatID, terr)
+			} else {
+				taskID = t.ID
+			}
+		}
+
 		// Send cover photo with metadata at the start.
 		if meta != nil && meta.CoverURL != "" {
 			caption := buildMetaCaption(meta)
@@ -421,7 +436,7 @@ func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *ses
 				continue
 			}
 
-			job, err := b.cfg.JobSvc.CreateJob(bgCtx, userID, audioKey, vttKey, pair.Audio.Title, pair.VTT.Title, cfg)
+			job, err := b.cfg.JobSvc.CreateJob(bgCtx, userID, taskID, audioKey, vttKey, pair.Audio.Title, pair.VTT.Title, cfg)
 			if err != nil {
 				log.Printf("tgbot: rj create job for %s: %v", pair.Audio.Title, err)
 				b.cfg.Storage.Delete(bgCtx, audioKey) //nolint:errcheck

@@ -28,6 +28,7 @@ const (
 type BotConfig struct {
 	Token            string
 	JobSvc           *application.JobService
+	TaskSvc          *application.TaskService
 	AuthSvc          *application.AuthService
 	Storage          domain.FileStorage
 	UserRepo         domain.UserRepository
@@ -233,7 +234,7 @@ func (b *BotServer) handleCommand(ctx context.Context, chatID int64, sess *sessi
 		b.handleStatus(ctx, chatID, sess.userID, args)
 
 	case "/jobs":
-		b.handleJobs(ctx, chatID, sess.userID)
+		b.sendTaskListView(ctx, chatID, sess.userID, 0)
 
 	case "/bind":
 		b.handleBind(ctx, chatID, tgUserID, sess.userID, args)
@@ -314,84 +315,88 @@ func (b *BotServer) handleStatus(ctx context.Context, chatID int64, userID, jobI
 	b.api.sendMessage(ctx, chatID, sb.String(), kb) //nolint:errcheck
 }
 
-func (b *BotServer) handleJobs(ctx context.Context, chatID int64, userID string) {
-	b.sendJobsView(ctx, chatID, userID, 0)
-}
-
-// sendJobsView renders the grouped jobs view. If editMsgID > 0, edits that message;
+// sendTaskListView renders the task list. If editMsgID > 0, edits that message;
 // otherwise sends a new one.
-func (b *BotServer) sendJobsView(ctx context.Context, chatID int64, userID string, editMsgID int) {
+func (b *BotServer) sendTaskListView(ctx context.Context, chatID int64, userID string, editMsgID int) {
 	if userID == "" {
 		b.api.sendMessage(ctx, chatID, "Use /new to start a job first.", nil) //nolint:errcheck
 		return
 	}
-	jobs, err := b.cfg.JobSvc.ListJobs(ctx, userID, 20)
+	if b.cfg.TaskSvc == nil {
+		b.api.sendMessage(ctx, chatID, "Task service unavailable.", nil) //nolint:errcheck
+		return
+	}
+	tasks, err := b.cfg.TaskSvc.ListTasks(ctx, userID, 20)
 	if err != nil {
-		b.api.sendMessage(ctx, chatID, "Failed to retrieve jobs.", nil) //nolint:errcheck
+		b.api.sendMessage(ctx, chatID, "Failed to retrieve tasks.", nil) //nolint:errcheck
 		return
 	}
-	if len(jobs) == 0 {
-		b.api.sendMessage(ctx, chatID, "No jobs found. Use /new or /rj to create one.", nil) //nolint:errcheck
-		return
-	}
-
-	// Group jobs by status.
-	var processing, completed, failed []domain.Job
-	for _, j := range jobs {
-		switch j.Status {
-		case domain.StatusQueued, domain.StatusProcessing:
-			processing = append(processing, j)
-		case domain.StatusCompleted:
-			completed = append(completed, j)
-		case domain.StatusFailed:
-			failed = append(failed, j)
+	if len(tasks) == 0 {
+		msg := "No tasks yet. Use /new or /rj to start."
+		if editMsgID > 0 {
+			b.api.editMessageText(ctx, chatID, editMsgID, msg, nil) //nolint:errcheck
+		} else {
+			b.api.sendMessage(ctx, chatID, msg, nil) //nolint:errcheck
 		}
+		return
 	}
 
 	var sb strings.Builder
-	sb.WriteString("<b>📊 Your Jobs</b>\n")
+	sb.WriteString(fmt.Sprintf("<b>📊 Your Tasks (%d)</b>\n", len(tasks)))
 
 	var rows [][]InlineKeyboardButton
-
-	if len(processing) > 0 {
-		sb.WriteString(fmt.Sprintf("\n<b>⚙️ Processing (%d):</b>\n", len(processing)))
-		for _, j := range processing {
-			status := "queued"
-			if j.Status == domain.StatusProcessing && j.Progress != "" {
-				status = j.Progress
-			}
-			sb.WriteString(fmt.Sprintf("  • %s — %s\n", j.AudioName, status))
+	for _, t := range tasks {
+		icon := "📄"
+		if t.Source == domain.TaskSourceRJ {
+			icon = "📁"
 		}
+
+		// Summarise job statuses for this task.
+		jobs, _ := b.cfg.JobSvc.ListByTask(ctx, t.ID)
+		total := len(jobs)
+		done, inprog, failed := 0, 0, 0
+		for _, j := range jobs {
+			switch j.Status {
+			case domain.StatusCompleted:
+				done++
+			case domain.StatusQueued, domain.StatusProcessing:
+				inprog++
+			case domain.StatusFailed:
+				failed++
+			}
+		}
+
+		var statusStr string
+		if total == 0 {
+			statusStr = "queued"
+		} else if inprog > 0 {
+			statusStr = fmt.Sprintf("⚙️ %d/%d processing", inprog, total)
+		} else if failed > 0 && done == 0 {
+			statusStr = fmt.Sprintf("❌ %d failed", failed)
+		} else if failed > 0 {
+			statusStr = fmt.Sprintf("⚠️ %d/%d done, %d failed", done, total, failed)
+		} else {
+			statusStr = fmt.Sprintf("✅ %d/%d complete", done, total)
+		}
+
+		dateStr := t.CreatedAt.Format("Jan 2 15:04")
+		title := t.Title
+		if len(title) > 40 {
+			title = title[:40] + "…"
+		}
+		sb.WriteString(fmt.Sprintf("\n%s <b>%s</b>\n   %s  •  %s\n", icon, title, statusStr, dateStr))
+
+		btnLabel := fmt.Sprintf("%s %s", icon, t.Title)
+		if len(btnLabel) > 60 {
+			btnLabel = btnLabel[:60] + "…"
+		}
+		rows = append(rows, []InlineKeyboardButton{
+			{Text: btnLabel, CallbackData: "task:" + t.ID},
+		})
 	}
 
-	if len(completed) > 0 {
-		sb.WriteString(fmt.Sprintf("\n<b>✅ Completed (%d):</b>\n", len(completed)))
-		for _, j := range completed {
-			completedAt := ""
-			if j.CompletedAt != nil {
-				completedAt = j.CompletedAt.Format("2006-01-02 15:04")
-			}
-			sb.WriteString(fmt.Sprintf("  • %s  %s\n", j.AudioName, completedAt))
-			rows = append(rows, []InlineKeyboardButton{
-				{Text: fmt.Sprintf("📥 %s", j.AudioName), CallbackData: "dl:" + j.ID},
-			})
-		}
-	}
-
-	if len(failed) > 0 {
-		sb.WriteString(fmt.Sprintf("\n<b>❌ Failed (%d):</b>\n", len(failed)))
-		for _, j := range failed {
-			errMsg := ""
-			if j.Error != nil {
-				errMsg = " — " + *j.Error
-			}
-			sb.WriteString(fmt.Sprintf("  • %s%s\n", j.AudioName, errMsg))
-		}
-	}
-
-	// Refresh button.
 	rows = append(rows, []InlineKeyboardButton{
-		{Text: "🔄 Refresh", CallbackData: "jobs:refresh"},
+		{Text: "🔄 Refresh", CallbackData: "jobs:list"},
 	})
 	kb := &InlineKeyboardMarkup{InlineKeyboard: rows}
 
@@ -400,6 +405,99 @@ func (b *BotServer) sendJobsView(ctx context.Context, chatID int64, userID strin
 	} else {
 		b.api.sendMessage(ctx, chatID, sb.String(), kb) //nolint:errcheck
 	}
+}
+
+// handleTaskDetailCallback shows the jobs within a task, editing the current message.
+func (b *BotServer) handleTaskDetailCallback(ctx context.Context, chatID int64, userID string, msgID int, taskID string) {
+	if b.cfg.TaskSvc == nil {
+		return
+	}
+	task, err := b.cfg.TaskSvc.GetTask(ctx, taskID)
+	if err != nil || task.UserID != userID {
+		b.api.sendMessage(ctx, chatID, "Task not found.", nil) //nolint:errcheck
+		return
+	}
+
+	jobs, err := b.cfg.JobSvc.ListByTask(ctx, taskID)
+	if err != nil {
+		b.api.sendMessage(ctx, chatID, "Failed to retrieve task files.", nil) //nolint:errcheck
+		return
+	}
+
+	icon := "📄"
+	if task.Source == domain.TaskSourceRJ {
+		icon = "📁"
+	}
+	sourceStr := string(task.Source)
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%s <b>%s</b> · %s\n", icon, task.Title, sourceStr))
+	if task.Workno != "" {
+		sb.WriteString(fmt.Sprintf("<code>%s</code>\n", task.Workno))
+	}
+
+	if len(jobs) == 0 {
+		sb.WriteString("\nNo files in this task yet.")
+	} else {
+		sb.WriteString("\n")
+		for i, j := range jobs {
+			var fileStatus string
+			switch j.Status {
+			case domain.StatusCompleted:
+				fileStatus = "✅"
+			case domain.StatusProcessing:
+				fileStatus = "⚙️"
+				if j.Progress != "" {
+					fileStatus += " — " + j.Progress
+				}
+			case domain.StatusFailed:
+				fileStatus = "❌"
+				if j.Error != nil {
+					fileStatus += " — " + *j.Error
+				}
+			default:
+				fileStatus = "🕐 queued"
+			}
+			name := j.AudioName
+			if j.Status == domain.StatusCompleted {
+				ext := ""
+				base := j.AudioName
+				if idx := strings.LastIndex(j.AudioName, "."); idx >= 0 {
+					base = j.AudioName[:idx]
+					ext = j.AudioName[idx:]
+				}
+				_ = ext
+				name = base + "_translated.mp3"
+			}
+			sb.WriteString(fmt.Sprintf("%d. %s %s\n", i+1, fileStatus, name))
+		}
+	}
+
+	var rows [][]InlineKeyboardButton
+	for _, j := range jobs {
+		if j.Status == domain.StatusCompleted && j.OutputKey != "" {
+			ext := ""
+			base := j.AudioName
+			if idx := strings.LastIndex(j.AudioName, "."); idx >= 0 {
+				base = j.AudioName[:idx]
+				ext = j.AudioName[idx:]
+			}
+			_ = ext
+			label := base + "_translated.mp3"
+			if len(label) > 60 {
+				label = label[:60] + "…"
+			}
+			rows = append(rows, []InlineKeyboardButton{
+				{Text: "📥 " + label, CallbackData: "dl:" + j.ID},
+			})
+		}
+	}
+	rows = append(rows, []InlineKeyboardButton{
+		{Text: "← Back", CallbackData: "jobs:list"},
+	})
+	kb := &InlineKeyboardMarkup{InlineKeyboard: rows}
+
+	b.api.editMessageText(ctx, chatID, msgID, sb.String(), kb) //nolint:errcheck
 }
 
 func (b *BotServer) handleBind(ctx context.Context, chatID int64, tgUserID int64, currentUserID, args string) {
@@ -713,8 +811,10 @@ func (b *BotServer) handleCallback(ctx context.Context, cq *CallbackQuery) {
 		b.handleSpeedupCallback(ctx, chatID, sess, strings.TrimPrefix(data, "speedup:"))
 	case strings.HasPrefix(data, "dl:"):
 		b.handleDownloadCallback(ctx, chatID, sess.userID, strings.TrimPrefix(data, "dl:"))
-	case data == "jobs:refresh":
-		b.sendJobsView(ctx, chatID, sess.userID, cq.Message.MessageID)
+	case strings.HasPrefix(data, "task:"):
+		b.handleTaskDetailCallback(ctx, chatID, sess.userID, cq.Message.MessageID, strings.TrimPrefix(data, "task:"))
+	case data == "jobs:list", data == "jobs:refresh":
+		b.sendTaskListView(ctx, chatID, sess.userID, cq.Message.MessageID)
 	case data == "confirm":
 		b.handleConfirm(ctx, chatID, sess)
 	case data == "cancel_job":
@@ -856,7 +956,18 @@ func (b *BotServer) handleConfirm(ctx context.Context, chatID int64, sess *sessi
 			return
 		}
 
-		job, err := b.cfg.JobSvc.CreateJob(bgCtx, userID, audioKey, vttKey, audioName, vttName, cfg)
+		// Create a task to group this job.
+		taskID := ""
+		if b.cfg.TaskSvc != nil {
+			t, terr := b.cfg.TaskSvc.CreateTask(bgCtx, userID, domain.TaskSourceNew, audioName, "")
+			if terr != nil {
+				log.Printf("tgbot: create task for chat %d: %v", chatID, terr)
+			} else {
+				taskID = t.ID
+			}
+		}
+
+		job, err := b.cfg.JobSvc.CreateJob(bgCtx, userID, taskID, audioKey, vttKey, audioName, vttName, cfg)
 		if err != nil {
 			log.Printf("tgbot: create job for chat %d: %v", chatID, err)
 			b.cfg.Storage.Delete(bgCtx, audioKey)                                         //nolint:errcheck
