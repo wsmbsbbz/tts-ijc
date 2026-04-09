@@ -13,6 +13,8 @@ import (
 )
 
 const jobTimeout = 30 * time.Minute
+const translateRetryCount = 2
+const translateRetryDelay = 2 * time.Second
 
 // WorkerService consumes job IDs from the queue and processes them.
 type WorkerService struct {
@@ -109,8 +111,30 @@ func (w *WorkerService) processJob(ctx context.Context, workerID int, jobID stri
 		_ = w.repo.UpdateStatus(ctx, jobID, domain.StatusProcessing, msg)
 	}
 
-	if err := w.translator.Execute(jobCtx, input, onProgress); err != nil {
-		w.failJob(ctx, jobID, fmt.Sprintf("translation failed: %v", err))
+	var translateErr error
+translateLoop:
+	for attempt := 0; attempt <= translateRetryCount; attempt++ {
+		translateErr = w.translator.Execute(jobCtx, input, onProgress)
+		if translateErr == nil {
+			break
+		}
+		if attempt == translateRetryCount {
+			break
+		}
+
+		retryMsg := fmt.Sprintf("translation failed (attempt %d/%d): %v; retrying...", attempt+1, translateRetryCount+1, translateErr)
+		_ = w.repo.UpdateStatus(ctx, jobID, domain.StatusProcessing, retryMsg)
+		log.Printf("[worker %d] job %s: %s", workerID, jobID, retryMsg)
+
+		select {
+		case <-jobCtx.Done():
+			translateErr = jobCtx.Err()
+			break translateLoop
+		case <-time.After(translateRetryDelay):
+		}
+	}
+	if translateErr != nil {
+		w.failJob(ctx, jobID, fmt.Sprintf("translation failed after %d attempts: %v", translateRetryCount+1, translateErr))
 		return
 	}
 
