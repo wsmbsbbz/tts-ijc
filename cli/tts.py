@@ -39,6 +39,14 @@ class TTSProvider(ABC):
         """Human-readable provider name."""
 
 
+_XML_ATTR_ESCAPE = {'"': "&quot;"}
+
+
+def _escape_attr(value: str) -> str:
+    """Escape text for XML attribute values."""
+    return escape(value, entities=_XML_ATTR_ESCAPE)
+
+
 # ---------------------------------------------------------------------------
 # Edge TTS  (free, no API key)
 # ---------------------------------------------------------------------------
@@ -188,7 +196,7 @@ class AzureTTSProvider(TTSProvider):
             if start > pos:
                 out_parts.append(escape(text[pos:start]))
             word = m.group(0)
-            ph = escape(self._phoneme_map[word], entities={"\"": "&quot;"})
+            ph = _escape_attr(self._phoneme_map[word])
             out_parts.append(
                 f'<phoneme alphabet="sapi" ph="{ph}">{escape(word)}</phoneme>'
             )
@@ -202,26 +210,26 @@ class AzureTTSProvider(TTSProvider):
         if self._style or self._role or self._style_degree:
             attrs = []
             if self._style:
-                attrs.append(f'style="{escape(self._style, entities={"\"": "&quot;"})}"')
+                attrs.append(f'style="{_escape_attr(self._style)}"')
             if self._role:
-                attrs.append(f'role="{escape(self._role, entities={"\"": "&quot;"})}"')
+                attrs.append(f'role="{_escape_attr(self._role)}"')
             if self._style_degree:
                 attrs.append(
-                    f'styledegree="{escape(self._style_degree, entities={"\"": "&quot;"})}"'
+                    f'styledegree="{_escape_attr(self._style_degree)}"'
                 )
             express_open = "<mstts:express-as " + " ".join(attrs) + ">"
             content = express_open + content + "</mstts:express-as>"
 
         lexicon = ""
         if self._lexicon_uri:
-            uri = escape(self._lexicon_uri, entities={"\"": "&quot;"})
+            uri = _escape_attr(self._lexicon_uri)
             lexicon = f'<lexicon uri="{uri}"/>'
 
         return (
             '<speak version="1.0" xml:lang="zh-CN" '
             'xmlns="http://www.w3.org/2001/10/synthesis" '
             'xmlns:mstts="https://www.w3.org/2001/mstts">'
-            f'<voice name="{escape(self._voice, entities={"\"": "&quot;"})}">'
+            f'<voice name="{_escape_attr(self._voice)}">'
             f"{lexicon}{content}</voice></speak>"
         )
 
