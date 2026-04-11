@@ -77,6 +77,7 @@ stateIdle
 1. `configStepProvider` — 选择 TTS 提供方
 2. `configStepVolume` — 选择 TTS 音量
 3. `configStepSpeedup` — 是否启用语速加速
+4. `configStepOnomatopoeia` — 仅 `/rj` 流程：是否过滤仅拟声词字幕行（默认开启）
 
 ## 工作流详解
 
@@ -103,7 +104,7 @@ stateIdle
   → 进入 stateRJBrowse（仅展示有配对字幕的音频）
   → 用户浏览文件夹、勾选音频（支持全选）
   → 用户点击 Done
-  → 进入配置步骤 (provider → volume → speedup)
+  → 进入配置步骤 (provider → volume → speedup → onomatopoeia)
   → 用户确认
   → bot 逐个从 asmr.one 下载音频+配对VTT → 上传到 R2 → 创建 Job
   → notifier 轮询并通知
@@ -156,6 +157,7 @@ stateIdle
 | `provider:` | `handleProviderCallback` | TTS 提供方选择 |
 | `volume:` | `handleVolumeCallback` | 音量选择 |
 | `speedup:` | `handleSpeedupCallback` | 加速开关 |
+| `ono:` | `handleOnomatopoeiaCallback` | 拟声词过滤开关（仅 /rj） |
 | `dl:` | `handleDownloadCallback` | 下载已完成 job |
 | `confirm` | `handleConfirm` | 确认创建 job |
 | `cancel_job` | (inline) | 取消当前操作 |

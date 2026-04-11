@@ -11,6 +11,7 @@ class VTTSegment:
     start_ms: int
     end_ms: int
     text: str
+    lines: List[str]
 
     @property
     def duration_ms(self) -> int:
@@ -36,13 +37,13 @@ def _timestamp_to_ms(ts: str) -> int:
     return (hours * 3600 + minutes * 60 + seconds) * 1000 + ms
 
 
-def _clean_text(raw: str) -> str:
-    """Remove VTT markup and normalize whitespace."""
+def _clean_line(raw: str) -> str:
+    """Remove VTT markup and normalize whitespace for one subtitle line."""
     # Remove HTML-like tags (voice tags, bold, italic, etc.)
     text = re.sub(r"<[^>]+>", "", raw)
-    # Collapse whitespace within lines, strip each line
-    lines = [line.strip() for line in text.split("\n") if line.strip()]
-    return " ".join(lines)
+    # Collapse whitespace and trim
+    text = re.sub(r"\s+", " ", text.strip())
+    return text
 
 
 def parse_vtt(path: str) -> List[VTTSegment]:
@@ -92,8 +93,10 @@ def parse_vtt(path: str) -> List[VTTSegment]:
         except ValueError:
             continue
 
-        text_lines = lines[ts_line_idx + 1 :]
-        text = _clean_text("\n".join(text_lines))
+        raw_text_lines = lines[ts_line_idx + 1 :]
+        text_lines = [_clean_line(line) for line in raw_text_lines]
+        text_lines = [line for line in text_lines if line]
+        text = " ".join(text_lines)
 
         if text:
             segments.append(
@@ -102,6 +105,7 @@ def parse_vtt(path: str) -> List[VTTSegment]:
                     start_ms=start_ms,
                     end_ms=end_ms,
                     text=text,
+                    lines=text_lines,
                 )
             )
             segment_index += 1

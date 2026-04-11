@@ -17,11 +17,11 @@ import (
 )
 
 const (
-	officialMaxFileSize = 20 * 1024 * 1024        // 20 MB – official Bot API inbound limit
-	officialMaxSendSize = 50 * 1024 * 1024        // 50 MB – official Bot API outbound limit
-	localMaxFileSize    = 2 * 1024 * 1024 * 1024  // 2 GB  – local Bot API server limit
-	localMaxSendSize    = 2 * 1024 * 1024 * 1024  // 2 GB  – local Bot API server limit
-	longPollTimeout     = 30                      // seconds for getUpdates long-polling
+	officialMaxFileSize = 20 * 1024 * 1024       // 20 MB – official Bot API inbound limit
+	officialMaxSendSize = 50 * 1024 * 1024       // 50 MB – official Bot API outbound limit
+	localMaxFileSize    = 2 * 1024 * 1024 * 1024 // 2 GB  – local Bot API server limit
+	localMaxSendSize    = 2 * 1024 * 1024 * 1024 // 2 GB  – local Bot API server limit
+	longPollTimeout     = 30                     // seconds for getUpdates long-polling
 )
 
 // BotConfig holds all dependencies needed by the BotServer.
@@ -190,13 +190,14 @@ Convert VTT subtitles to speech and mix them into audio.
 <b>Upload workflow (/new):</b>
 1. /new → send your audio file (MP3/WAV/OGG/M4A, max 20 MB)
 2. Send your WebVTT subtitle file (.vtt, max 20 MB)
-3. Choose TTS provider and settings
+3. Choose TTS provider and settings (volume/speedup)
 4. Confirm — I'll notify you when done
 
 <b>asmr.one workflow (/rj):</b>
 1. /asmr_bind &lt;token&gt; — bind your asmr.one JWT once
 2. /rj RJxxxxxx — browse files, select audio + subtitle
-3. Confirm — server downloads and processes directly
+3. Choose TTS settings + onomatopoeia filter (recommended: enabled)
+4. Confirm — server downloads and processes directly
 
 <b>Download completed jobs:</b>
 Use /jobs to see completed jobs with download buttons.
@@ -809,6 +810,8 @@ func (b *BotServer) handleCallback(ctx context.Context, cq *CallbackQuery) {
 		b.handleVolumeCallback(ctx, chatID, sess, strings.TrimPrefix(data, "volume:"))
 	case strings.HasPrefix(data, "speedup:"):
 		b.handleSpeedupCallback(ctx, chatID, sess, strings.TrimPrefix(data, "speedup:"))
+	case strings.HasPrefix(data, "ono:"):
+		b.handleOnomatopoeiaCallback(ctx, chatID, sess, strings.TrimPrefix(data, "ono:"))
 	case strings.HasPrefix(data, "dl:"):
 		b.handleDownloadCallback(ctx, chatID, sess.userID, strings.TrimPrefix(data, "dl:"))
 	case strings.HasPrefix(data, "task:"):
@@ -886,29 +889,64 @@ func (b *BotServer) handleSpeedupCallback(ctx context.Context, chatID int64, ses
 		return
 	}
 	sess.cfg.NoSpeedup = (val == "off")
+	// /rj gets one extra optional config step; upload workflow stays unchanged.
+	if sess.rjMode {
+		sess.configStep = configStepOnomatopoeia
+		b.store.set(chatID, sess)
+		if sess.configMsgID != 0 {
+			b.api.editMessageText(ctx, chatID, sess.configMsgID, "Filter onomatopoeia-only subtitle lines?", b.onomatopoeiaKeyboard()) //nolint:errcheck
+		} else {
+			b.api.sendMessage(ctx, chatID, "Filter onomatopoeia-only subtitle lines?", b.onomatopoeiaKeyboard()) //nolint:errcheck
+		}
+		return
+	}
 	sess.state = stateConfirming
 	b.store.set(chatID, sess)
-
-	speedupStr := "enabled"
-	if sess.cfg.NoSpeedup {
-		speedupStr = "disabled"
-	}
-	summary := fmt.Sprintf(
-		"📋 <b>Job Summary</b>\n\n"+
-			"Audio:        <code>%s</code>\n"+
-			"Subtitle:     <code>%s</code>\n"+
-			"TTS Provider: <b>%s</b>\n"+
-			"Volume:       <b>%.2f</b>\n"+
-			"Acceleration: <b>%s</b>\n\n"+
-			"Start the job?",
-		sess.audioName, sess.vttName,
-		sess.cfg.TTSProvider, sess.cfg.TTSVolume, speedupStr,
-	)
+	summary := b.buildConfirmSummary(sess)
 	if sess.configMsgID != 0 {
 		b.api.editMessageText(ctx, chatID, sess.configMsgID, summary, b.confirmKeyboard()) //nolint:errcheck
 	} else {
 		b.api.sendMessage(ctx, chatID, summary, b.confirmKeyboard()) //nolint:errcheck
 	}
+}
+
+func (b *BotServer) handleOnomatopoeiaCallback(ctx context.Context, chatID int64, sess *session, val string) {
+	if sess.state != stateWaitingConfig || sess.configStep != configStepOnomatopoeia {
+		return
+	}
+	sess.cfg.FilterOnomatopoeia = (val != "off")
+	sess.state = stateConfirming
+	b.store.set(chatID, sess)
+
+	summary := b.buildConfirmSummary(sess)
+	if sess.configMsgID != 0 {
+		b.api.editMessageText(ctx, chatID, sess.configMsgID, summary, b.confirmKeyboard()) //nolint:errcheck
+	} else {
+		b.api.sendMessage(ctx, chatID, summary, b.confirmKeyboard()) //nolint:errcheck
+	}
+}
+
+func (b *BotServer) buildConfirmSummary(sess *session) string {
+	speedupStr := "enabled"
+	if sess.cfg.NoSpeedup {
+		speedupStr = "disabled"
+	}
+	onoFilterStr := "disabled"
+	if sess.cfg.FilterOnomatopoeia {
+		onoFilterStr = "enabled"
+	}
+	return fmt.Sprintf(
+		"📋 <b>Job Summary</b>\n\n"+
+			"Audio:        <code>%s</code>\n"+
+			"Subtitle:     <code>%s</code>\n"+
+			"TTS Provider: <b>%s</b>\n"+
+			"Volume:       <b>%.2f</b>\n"+
+			"Acceleration: <b>%s</b>\n"+
+			"Ono Filter:   <b>%s</b>\n\n"+
+			"Start the job?",
+		sess.audioName, sess.vttName,
+		sess.cfg.TTSProvider, sess.cfg.TTSVolume, speedupStr, onoFilterStr,
+	)
 }
 
 // handleConfirm downloads both files from Telegram, uploads them to R2,
@@ -1100,6 +1138,17 @@ func (b *BotServer) speedupKeyboard() *InlineKeyboardMarkup {
 			{
 				{Text: "✅ Enable (recommended)", CallbackData: "speedup:on"},
 				{Text: "Disable", CallbackData: "speedup:off"},
+			},
+		},
+	}
+}
+
+func (b *BotServer) onomatopoeiaKeyboard() *InlineKeyboardMarkup {
+	return &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "✅ Enable (recommended)", CallbackData: "ono:on"},
+				{Text: "Disable", CallbackData: "ono:off"},
 			},
 		},
 	}

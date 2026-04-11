@@ -32,6 +32,11 @@ type Config struct {
 	// AllowedTTSProviders is the comma-separated list of enabled TTS engines.
 	AllowedTTSProviders string
 
+	// OpenRouter settings used by the Python subtitle preprocessor.
+	OpenRouterAPIKey  string
+	OpenRouterModel   string
+	OpenRouterBaseURL string
+
 	// Per-user lifetime quotas (bytes).
 	UserUploadLimitBytes   int64
 	UserDownloadLimitBytes int64
@@ -67,6 +72,9 @@ func Load() Config {
 		AccountTTLHours:        envInt("ACCOUNT_TTL_HOURS", 24),
 		SessionTTLHours:        envInt("SESSION_TTL_HOURS", 24),
 		AllowedTTSProviders:    envStr("ALLOWED_TTS_PROVIDERS", "edge"),
+		OpenRouterAPIKey:       envStr("OPENROUTER_API_KEY", ""),
+		OpenRouterModel:        envStr("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
+		OpenRouterBaseURL:      envStr("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
 		UserUploadLimitBytes:   envInt64("USER_UPLOAD_LIMIT_BYTES", 1<<30),   // 1 GB
 		UserDownloadLimitBytes: envInt64("USER_DOWNLOAD_LIMIT_BYTES", 3<<30), // 3 GB
 

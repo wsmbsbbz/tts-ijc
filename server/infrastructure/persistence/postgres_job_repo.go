@@ -55,6 +55,7 @@ func createPostgresTable(db *sql.DB) error {
 			tts_provider TEXT NOT NULL DEFAULT 'edge',
 			tts_volume   DOUBLE PRECISION NOT NULL DEFAULT 0.08,
 			no_speedup   BOOLEAN NOT NULL DEFAULT FALSE,
+			filter_onomatopoeia BOOLEAN NOT NULL DEFAULT FALSE,
 			concurrency  INTEGER NOT NULL DEFAULT 5,
 			created_at   TIMESTAMPTZ NOT NULL,
 			completed_at TIMESTAMPTZ,
@@ -75,6 +76,7 @@ func migratePostgresTable(db *sql.DB) error {
 		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS user_id     TEXT   NOT NULL DEFAULT ''",
 		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS output_size BIGINT NOT NULL DEFAULT 0",
 		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS task_id     TEXT   NOT NULL DEFAULT ''",
+		"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS filter_onomatopoeia BOOLEAN NOT NULL DEFAULT FALSE",
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "already exists") {
 			return fmt.Errorf("migrate: %w", err)
@@ -92,15 +94,15 @@ func (r *PostgresJobRepo) Save(ctx context.Context, job domain.Job) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO jobs (id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		                  audio_name, vtt_name,
-		                  tts_provider, tts_volume, no_speedup, concurrency,
+		                  tts_provider, tts_volume, no_speedup, filter_onomatopoeia, concurrency,
 		                  created_at, completed_at, error)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 	`,
 		job.ID, job.UserID, job.TaskID, string(job.Status), job.Progress,
 		job.AudioKey, job.VTTKey, job.OutputKey,
 		job.AudioName, job.VTTName,
 		job.Config.TTSProvider, job.Config.TTSVolume,
-		job.Config.NoSpeedup, job.Config.Concurrency,
+		job.Config.NoSpeedup, job.Config.FilterOnomatopoeia, job.Config.Concurrency,
 		job.CreatedAt, job.CompletedAt,
 		job.Error,
 	)
@@ -114,7 +116,7 @@ func (r *PostgresJobRepo) FindByID(ctx context.Context, id string) (domain.Job, 
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
-		       tts_provider, tts_volume, no_speedup, concurrency,
+		       tts_provider, tts_volume, no_speedup, filter_onomatopoeia, concurrency,
 		       output_size, created_at, completed_at, error
 		FROM jobs WHERE id = $1
 	`, id)
@@ -125,7 +127,7 @@ func (r *PostgresJobRepo) ListRecent(ctx context.Context, userID string, limit i
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
-		       tts_provider, tts_volume, no_speedup, concurrency,
+		       tts_provider, tts_volume, no_speedup, filter_onomatopoeia, concurrency,
 		       output_size, created_at, completed_at, error
 		FROM jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2
 	`, userID, limit)
@@ -149,7 +151,7 @@ func (r *PostgresJobRepo) ListByTask(ctx context.Context, taskID string) ([]doma
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
-		       tts_provider, tts_volume, no_speedup, concurrency,
+		       tts_provider, tts_volume, no_speedup, filter_onomatopoeia, concurrency,
 		       output_size, created_at, completed_at, error
 		FROM jobs WHERE task_id = $1 ORDER BY created_at ASC
 	`, taskID)
@@ -196,7 +198,7 @@ func (r *PostgresJobRepo) DeleteExpired(ctx context.Context, ttl time.Duration) 
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
-		       tts_provider, tts_volume, no_speedup, concurrency,
+		       tts_provider, tts_volume, no_speedup, filter_onomatopoeia, concurrency,
 		       output_size, created_at, completed_at, error
 		FROM jobs WHERE created_at < $1 AND status IN ($2, $3)
 	`, cutoff, string(domain.StatusCompleted), string(domain.StatusFailed))
@@ -244,7 +246,7 @@ func scanPgJob(s scanner) (domain.Job, error) {
 		&j.AudioKey, &j.VTTKey, &j.OutputKey,
 		&j.AudioName, &j.VTTName,
 		&j.Config.TTSProvider, &j.Config.TTSVolume,
-		&j.Config.NoSpeedup, &j.Config.Concurrency,
+		&j.Config.NoSpeedup, &j.Config.FilterOnomatopoeia, &j.Config.Concurrency,
 		&j.OutputSize, &j.CreatedAt, &completedAt, &errMsg,
 	)
 	if err != nil {

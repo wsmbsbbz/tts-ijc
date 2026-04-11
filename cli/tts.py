@@ -10,10 +10,11 @@ gcloud  Google Cloud TTS — needs GOOGLE_APPLICATION_CREDENTIALS or GCLOUD_TTS_
 """
 
 import asyncio
+import json
 import os
-import subprocess
+import re
+from xml.sax.saxutils import escape
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Optional
 
 
@@ -125,9 +126,104 @@ class AzureTTSProvider(TTSProvider):
                 "Set --azure-region or AZURE_TTS_REGION environment variable."
             )
 
+        # Optional style/prosody controls (global defaults via environment vars).
+        self._style = os.environ.get("AZURE_TTS_STYLE", "").strip()
+        self._role = os.environ.get("AZURE_TTS_ROLE", "").strip()
+        self._style_degree = os.environ.get("AZURE_TTS_STYLE_DEGREE", "").strip()
+        self._lexicon_uri = os.environ.get("AZURE_TTS_LEXICON_URI", "").strip()
+        self._phoneme_map = self._load_phoneme_map()
+
     @property
     def name(self) -> str:
         return f"azure ({self._voice})"
+
+    def _load_phoneme_map(self) -> dict[str, str]:
+        """Load optional pronunciation overrides from environment.
+
+        Supported env vars:
+        - AZURE_TTS_PHONEME_MAP_JSON: JSON object string, e.g. {"重":"chong2"}
+        - AZURE_TTS_PHONEME_MAP_FILE: path to a JSON object file
+        """
+        payload = os.environ.get("AZURE_TTS_PHONEME_MAP_JSON", "").strip()
+        file_path = os.environ.get("AZURE_TTS_PHONEME_MAP_FILE", "").strip()
+        raw = ""
+        if file_path:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    raw = f.read()
+            except OSError as exc:
+                raise TTSError(f"Failed to read AZURE_TTS_PHONEME_MAP_FILE: {exc}") from exc
+        elif payload:
+            raw = payload
+        if not raw:
+            return {}
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise TTSError(f"Invalid Azure phoneme map JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise TTSError("Azure phoneme map must be a JSON object")
+
+        cleaned: dict[str, str] = {}
+        for k, v in data.items():
+            if not isinstance(k, str) or not isinstance(v, str):
+                continue
+            key = k.strip()
+            val = v.strip()
+            if key and val:
+                cleaned[key] = val
+        return cleaned
+
+    def _apply_phoneme_map(self, text: str) -> str:
+        if not self._phoneme_map:
+            return escape(text)
+
+        keys = sorted(self._phoneme_map.keys(), key=len, reverse=True)
+        pattern = re.compile("|".join(re.escape(k) for k in keys))
+        out_parts = []
+        pos = 0
+        for m in pattern.finditer(text):
+            start, end = m.span()
+            if start > pos:
+                out_parts.append(escape(text[pos:start]))
+            word = m.group(0)
+            ph = escape(self._phoneme_map[word], entities={"\"": "&quot;"})
+            out_parts.append(
+                f'<phoneme alphabet="sapi" ph="{ph}">{escape(word)}</phoneme>'
+            )
+            pos = end
+        if pos < len(text):
+            out_parts.append(escape(text[pos:]))
+        return "".join(out_parts)
+
+    def _build_ssml(self, text: str) -> str:
+        content = self._apply_phoneme_map(text)
+        if self._style or self._role or self._style_degree:
+            attrs = []
+            if self._style:
+                attrs.append(f'style="{escape(self._style, entities={"\"": "&quot;"})}"')
+            if self._role:
+                attrs.append(f'role="{escape(self._role, entities={"\"": "&quot;"})}"')
+            if self._style_degree:
+                attrs.append(
+                    f'styledegree="{escape(self._style_degree, entities={"\"": "&quot;"})}"'
+                )
+            express_open = "<mstts:express-as " + " ".join(attrs) + ">"
+            content = express_open + content + "</mstts:express-as>"
+
+        lexicon = ""
+        if self._lexicon_uri:
+            uri = escape(self._lexicon_uri, entities={"\"": "&quot;"})
+            lexicon = f'<lexicon uri="{uri}"/>'
+
+        return (
+            '<speak version="1.0" xml:lang="zh-CN" '
+            'xmlns="http://www.w3.org/2001/10/synthesis" '
+            'xmlns:mstts="https://www.w3.org/2001/mstts">'
+            f'<voice name="{escape(self._voice, entities={"\"": "&quot;"})}">'
+            f"{lexicon}{content}</voice></speak>"
+        )
 
     def generate(self, text: str, output_path: str) -> None:
         try:
@@ -146,7 +242,11 @@ class AzureTTSProvider(TTSProvider):
         synthesizer = speechsdk.SpeechSynthesizer(
             speech_config=speech_config, audio_config=audio_config
         )
-        result = synthesizer.speak_text_async(text).get()
+        use_ssml = bool(self._style or self._role or self._style_degree or self._lexicon_uri or self._phoneme_map)
+        if use_ssml:
+            result = synthesizer.speak_ssml_async(self._build_ssml(text)).get()
+        else:
+            result = synthesizer.speak_text_async(text).get()
 
         if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
             raise TTSError(f"Azure TTS failed: {result.reason}")

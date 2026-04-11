@@ -44,6 +44,9 @@ func (t *PythonTranslator) Execute(ctx context.Context, input domain.TranslateIn
 	if input.Config.NoSpeedup {
 		args = append(args, "--no-speedup")
 	}
+	if input.Config.FilterOnomatopoeia {
+		args = append(args, "--filter-onomatopoeia")
+	}
 
 	cmd := exec.CommandContext(ctx, t.pythonBin, args...)
 	cmd.Dir = t.pythonDir

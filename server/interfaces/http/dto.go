@@ -26,16 +26,19 @@ type CreateJobRequest struct {
 	TTSProvider string  `json:"tts_provider"`
 	TTSVolume   float64 `json:"tts_volume"`
 	NoSpeedup   bool    `json:"no_speedup"`
-	Concurrency int     `json:"concurrency"`
+	// Optional. Defaults to false when omitted.
+	FilterOnomatopoeia bool `json:"filter_onomatopoeia"`
+	Concurrency        int  `json:"concurrency"`
 }
 
 // ToJobConfig converts the request DTO to a domain value object.
 func (r CreateJobRequest) ToJobConfig() domain.JobConfig {
 	return domain.JobConfig{
-		TTSProvider: r.TTSProvider,
-		TTSVolume:   r.TTSVolume,
-		NoSpeedup:   r.NoSpeedup,
-		Concurrency: r.Concurrency,
+		TTSProvider:        r.TTSProvider,
+		TTSVolume:          r.TTSVolume,
+		NoSpeedup:          r.NoSpeedup,
+		FilterOnomatopoeia: r.FilterOnomatopoeia,
+		Concurrency:        r.Concurrency,
 	}
 }
 

@@ -95,3 +95,44 @@
 | `DAILY_REGISTER_LIMIT` | 每日全局注册上限 | `50` |
 | `USER_DAILY_JOB_LIMIT` | 每用户每日任务上限 | `5` |
 | `USER_DAILY_BYTES_LIMIT` | 每用户每日流量上限（字节） | `524288000`（500 MB）|
+
+---
+
+## Phase 4 — TTS质量优化 + /rj拟声词过滤 + 重复台词去重 ✅
+
+**目标**：提升最终听感与语义准确率，减少无意义 TTS 生成，解决多人同句导致的加速听感劣化。
+
+### 涉及改动
+
+**后端**
+
+- `domain/job.go`：`JobConfig` 新增 `FilterOnomatopoeia`
+- `infrastructure/persistence`：SQLite / Postgres 表新增 `filter_onomatopoeia` 字段（向后兼容迁移）
+- `interfaces/http/dto.go`：`CreateJobRequest` 新增可选 `filter_onomatopoeia`
+- `infrastructure/translator/python_translator.go`：透传 `--filter-onomatopoeia` 到 Python CLI
+- `interfaces/telegram`：`/rj` 配置流新增“拟声词过滤”开关步骤（默认开启，推荐）
+
+**CLI / Python**
+
+- `cli/vtt_preprocessor.py`：新增字幕预处理（同 cue 重复台词去重 + 拟声词过滤）
+- `cli/parser.py`：解析结果保留逐行 `lines`，供预处理使用
+- `cli/main.py`：新增预处理参数；`openai` 模型新增 `gpt-4o-mini-tts`
+- `cli/tts.py`：Azure 增强 SSML 能力（style/role/phoneme/lexicon）
+
+**文档**
+
+- 新增 `docs/phase4-tts-onomatopoeia.md`（改动说明 + 使用方法 + 参数/环境变量）
+
+### 新增环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `OPENROUTER_API_KEY` | 拟声词过滤使用的 OpenRouter Key | — |
+| `OPENROUTER_MODEL` | 拟声词过滤模型 | `openai/gpt-4o-mini` |
+| `OPENROUTER_BASE_URL` | OpenRouter API 基地址 | `https://openrouter.ai/api/v1` |
+| `AZURE_TTS_STYLE` | Azure TTS 风格（可选） | — |
+| `AZURE_TTS_ROLE` | Azure TTS 角色（可选） | — |
+| `AZURE_TTS_STYLE_DEGREE` | Azure TTS 风格强度（可选） | — |
+| `AZURE_TTS_PHONEME_MAP_JSON` | Azure 发音映射 JSON（可选） | — |
+| `AZURE_TTS_PHONEME_MAP_FILE` | Azure 发音映射文件路径（可选） | — |
+| `AZURE_TTS_LEXICON_URI` | Azure lexicon URI（可选） | — |

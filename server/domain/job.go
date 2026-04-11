@@ -17,7 +17,10 @@ type JobConfig struct {
 	TTSProvider string
 	TTSVolume   float64
 	NoSpeedup   bool
-	Concurrency int
+	// FilterOnomatopoeia skips subtitle lines that contain only onomatopoeia.
+	// Default false; currently enabled via the /rj flow toggle.
+	FilterOnomatopoeia bool
+	Concurrency        int
 }
 
 // Job is the core domain entity representing a translation task.

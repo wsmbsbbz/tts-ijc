@@ -27,7 +27,7 @@ TTS provider reference
 ----------------------
 Provider  Free?  Quality  API key?  Package
 --------  -----  -------  --------  -------
-edge      Yes    ★★★★★   No        edge-tts
+edge      Yes    ★★★      No        edge-tts
 gtts      Yes    ★★★      No        gTTS
 azure     *500K  ★★★★★   Yes       azure-cognitiveservices-speech
 openai    No     ★★★★★   Yes       openai
@@ -45,6 +45,7 @@ import tempfile
 from pathlib import Path
 
 from parser import parse_vtt
+from vtt_preprocessor import preprocess_segments
 from tts import build_provider, TTSError
 from mixer import (
     generate_tts_clips,
@@ -132,7 +133,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     oai.add_argument(
         "--openai-model",
         default="tts-1",
-        choices=["tts-1", "tts-1-hd"],
+        choices=["tts-1", "tts-1-hd", "gpt-4o-mini-tts"],
         metavar="MODEL",
         help="OpenAI TTS model (default: tts-1)",
     )
@@ -172,6 +173,31 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--keep-tmp",
         action="store_true",
         help="Keep temporary TTS clip files after processing",
+    )
+
+    pre = p.add_argument_group("Subtitle preprocessing options")
+    pre.add_argument(
+        "--filter-onomatopoeia",
+        action="store_true",
+        help="Filter subtitle lines that are onomatopoeia-only (uses OpenRouter)",
+    )
+    pre.add_argument(
+        "--openrouter-api-key",
+        default=None,
+        metavar="KEY",
+        help="OpenRouter API key (or set OPENROUTER_API_KEY)",
+    )
+    pre.add_argument(
+        "--openrouter-model",
+        default=None,
+        metavar="MODEL",
+        help="OpenRouter model for filtering (or set OPENROUTER_MODEL, default: openai/gpt-4o-mini)",
+    )
+    pre.add_argument(
+        "--openrouter-base-url",
+        default=None,
+        metavar="URL",
+        help="OpenRouter base URL (or set OPENROUTER_BASE_URL, default: https://openrouter.ai/api/v1)",
     )
 
     return p
@@ -247,6 +273,22 @@ def main() -> None:
         print("ERROR: No subtitle segments found in VTT file.", file=sys.stderr)
         sys.exit(1)
     print(f"  Found {len(segments)} segments.")
+    segments, stats = preprocess_segments(
+        segments=segments,
+        enable_onomatopoeia_filter=args.filter_onomatopoeia,
+        openrouter_api_key=args.openrouter_api_key,
+        openrouter_model=args.openrouter_model,
+        openrouter_base_url=args.openrouter_base_url,
+    )
+    print(
+        "  Preprocess: "
+        f"duplicates_removed={stats.duplicate_lines_removed}, "
+        f"onomatopoeia_removed={stats.onomatopoeia_lines_removed}, "
+        f"segments={stats.output_segments}/{stats.input_segments}."
+    )
+    if not segments:
+        print("ERROR: No subtitle segments left after preprocessing.", file=sys.stderr)
+        sys.exit(1)
 
     # Build TTS provider
     try:

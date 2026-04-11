@@ -300,8 +300,9 @@ func (b *BotServer) handleRJDoneAudio(ctx context.Context, chatID int64, sess *s
 	sess.state = stateWaitingConfig
 	sess.configStep = configStepProvider
 	sess.cfg = domain.JobConfig{
-		TTSVolume:   0.08,
-		Concurrency: 3,
+		TTSVolume:          0.08,
+		FilterOnomatopoeia: true, // recommended default for /rj workflow
+		Concurrency:        3,
 	}
 	text := fmt.Sprintf("✅ Selected <b>%d</b> audio file(s) with paired subtitles.\n\nSelect a TTS provider:",
 		len(sess.rjSelectedURLs))
@@ -431,7 +432,7 @@ func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *ses
 			if err != nil {
 				log.Printf("tgbot: rj download audio %s: %v", pair.Audio.Title, err)
 				b.cfg.Storage.Delete(bgCtx, vttKey) //nolint:errcheck
-				b.api.sendMessage(bgCtx, chatID, //nolint:errcheck
+				b.api.sendMessage(bgCtx, chatID,    //nolint:errcheck
 					fmt.Sprintf("❌ Failed to download %s: %s", pair.Audio.Title, err.Error()), nil)
 				continue
 			}
@@ -441,7 +442,7 @@ func (b *BotServer) handleRJConfirm(ctx context.Context, chatID int64, sess *ses
 				log.Printf("tgbot: rj create job for %s: %v", pair.Audio.Title, err)
 				b.cfg.Storage.Delete(bgCtx, audioKey) //nolint:errcheck
 				b.cfg.Storage.Delete(bgCtx, vttKey)   //nolint:errcheck
-				b.api.sendMessage(bgCtx, chatID, //nolint:errcheck
+				b.api.sendMessage(bgCtx, chatID,      //nolint:errcheck
 					fmt.Sprintf("❌ Failed to queue job for %s: %s", pair.Audio.Title, err.Error()), nil)
 				continue
 			}

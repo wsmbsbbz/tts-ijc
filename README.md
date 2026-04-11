@@ -81,17 +81,22 @@ python cli/main.py audio.mp3 audio.vtt output.mp3 --tts-volume 0.12
 
 # 禁用自动加速（保持 TTS 原速）
 python cli/main.py audio.mp3 audio.vtt output.mp3 --no-speedup
+
+# 过滤仅拟声词字幕行（需要 OPENROUTER_API_KEY）
+python cli/main.py audio.mp3 audio.vtt output.mp3 --filter-onomatopoeia
 ```
 
 ### TTS 提供方对比
 
 | 提供方 | 免费额度 | 音质 | 需要 API Key |
 |--------|----------|------|--------------|
-| `edge` | 完全免费 | ★★★★★ | 否 |
+| `edge` | 完全免费 | ★★★ | 否 |
 | `gtts` | 完全免费 | ★★★ | 否 |
 | `azure` | 500K 字/月 | ★★★★★ | 是 |
 | `openai` | 按量付费 | ★★★★★ | 是 |
 | `gcloud` | 1M 字/月 | ★★★★ | 是 |
+
+> 说明：`edge` 适合免费快速试跑；正式听感与可控性（情感、发音纠错）建议优先用 `azure` / `openai`。
 
 ### 付费 TTS 示例
 
@@ -111,6 +116,14 @@ python cli/main.py audio.mp3 audio.vtt output.mp3 --tts openai --openai-key YOUR
 # Google Cloud
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
 python cli/main.py audio.mp3 audio.vtt output.mp3 --tts gcloud
+
+# Azure 高级可控（可选）：风格 / 角色 / 发音纠错 / 词典
+export AZURE_TTS_STYLE=whispering
+export AZURE_TTS_ROLE=YoungAdultFemale
+export AZURE_TTS_STYLE_DEGREE=1.2
+export AZURE_TTS_PHONEME_MAP_JSON='{"重":"chong2"}'
+export AZURE_TTS_LEXICON_URI='https://example.com/zh-lexicon.pls'
+python cli/main.py audio.mp3 audio.vtt output.mp3 --tts azure
 ```
 
 ## 完整参数说明
@@ -135,15 +148,28 @@ Azure TTS 选项:
   --azure-key KEY         Azure Speech API Key（或设置 AZURE_TTS_KEY）
   --azure-region REGION   Azure 区域，如 eastus（或设置 AZURE_TTS_REGION）
   --azure-voice VOICE     语音名称（默认: zh-CN-XiaoxiaoNeural）
+                          高级可控（可选环境变量）:
+                          AZURE_TTS_STYLE / AZURE_TTS_ROLE / AZURE_TTS_STYLE_DEGREE
+                          AZURE_TTS_PHONEME_MAP_JSON / AZURE_TTS_PHONEME_MAP_FILE
+                          AZURE_TTS_LEXICON_URI
 
 OpenAI TTS 选项:
   --openai-key KEY        OpenAI API Key（或设置 OPENAI_API_KEY）
   --openai-voice VOICE    语音: alloy（默认）, echo, fable, onyx, nova, shimmer
-  --openai-model MODEL    模型: tts-1（默认）, tts-1-hd
+  --openai-model MODEL    模型: tts-1（默认）, tts-1-hd, gpt-4o-mini-tts
 
 Google Cloud TTS 选项:
   --gcloud-key KEY        API Key（或设置 GOOGLE_APPLICATION_CREDENTIALS）
   --gcloud-voice VOICE    语音名称（默认: cmn-CN-Wavenet-A）
+
+字幕预处理选项:
+  --filter-onomatopoeia   过滤仅拟声词字幕行（通过 OpenRouter 判定）
+  --openrouter-api-key KEY
+                          OpenRouter API Key（或设置 OPENROUTER_API_KEY）
+  --openrouter-model MODEL
+                          OpenRouter 模型（默认 openai/gpt-4o-mini）
+  --openrouter-base-url URL
+                          OpenRouter Base URL（默认 https://openrouter.ai/api/v1）
 
 混音选项:
   --tts-volume N          TTS 音量，范围 0–1（默认: 0.08）
@@ -175,6 +201,8 @@ Today we'll discuss an important topic.
 **并发生成** — 所有字幕段的 TTS 请求并发执行（默认 5 路），显著减少等待时间。
 
 **WAV 自动压缩** — 若输入和输出均为 WAV，输出自动转为 MP3（体积约缩小 10x）。
+
+**字幕预处理** — 默认会去重同一时间片中的重复台词；开启 `--filter-onomatopoeia` 后，可跳过仅拟声词句子，减少无意义 TTS。
 
 ## Web 服务模式
 
@@ -245,6 +273,9 @@ docker run -p 8080:8080 \
 | `R2_BUCKET_NAME` | — | R2 存储桶名称 |
 | `PYTHON_BIN` | `python3` | Python 可执行文件路径 |
 | `PYTHON_DIR` | `/opt/tc` | Python 脚本所在目录 |
+| `OPENROUTER_API_KEY` | — | 拟声词过滤使用的 OpenRouter Key |
+| `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | 拟声词过滤模型 |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenRouter API 基地址 |
 | `AUTH_USER` | — | HTTP Basic Auth 用户名（留空则不启用） |
 | `AUTH_PASS` | — | HTTP Basic Auth 密码 |
 
@@ -255,6 +286,7 @@ translation-combinator/
 ├── cli/                 # Python CLI 工具
 │   ├── main.py          # CLI 入口，参数解析与主流程
 │   ├── parser.py        # VTT 字幕解析
+│   ├── vtt_preprocessor.py # VTT 预处理（去重/拟声词过滤）
 │   ├── tts.py           # TTS 提供方实现（edge/gtts/azure/openai/gcloud）
 │   ├── mixer.py         # TTS 片段生成、时间轴对齐、音频混音
 │   └── requirements.txt # Python 依赖

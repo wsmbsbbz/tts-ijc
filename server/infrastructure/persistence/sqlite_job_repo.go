@@ -56,6 +56,7 @@ func createTable(db *sql.DB) error {
 			tts_provider TEXT NOT NULL DEFAULT 'edge',
 			tts_volume   REAL NOT NULL DEFAULT 0.08,
 			no_speedup   INTEGER NOT NULL DEFAULT 0,
+			filter_onomatopoeia INTEGER NOT NULL DEFAULT 0,
 			concurrency  INTEGER NOT NULL DEFAULT 5,
 			created_at   TEXT NOT NULL,
 			completed_at TEXT,
@@ -76,6 +77,7 @@ func migrateTable(db *sql.DB) error {
 		"ALTER TABLE jobs ADD COLUMN user_id     TEXT    NOT NULL DEFAULT ''",
 		"ALTER TABLE jobs ADD COLUMN output_size INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE jobs ADD COLUMN task_id     TEXT    NOT NULL DEFAULT ''",
+		"ALTER TABLE jobs ADD COLUMN filter_onomatopoeia INTEGER NOT NULL DEFAULT 0",
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return fmt.Errorf("migrate: %w", err)
@@ -93,15 +95,15 @@ func (r *SQLiteJobRepo) Save(ctx context.Context, job domain.Job) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO jobs (id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		                  audio_name, vtt_name,
-		                  tts_provider, tts_volume, no_speedup, concurrency,
+		                  tts_provider, tts_volume, no_speedup, filter_onomatopoeia, concurrency,
 		                  created_at, completed_at, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		job.ID, job.UserID, job.TaskID, string(job.Status), job.Progress,
 		job.AudioKey, job.VTTKey, job.OutputKey,
 		job.AudioName, job.VTTName,
 		job.Config.TTSProvider, job.Config.TTSVolume,
-		boolToInt(job.Config.NoSpeedup), job.Config.Concurrency,
+		boolToInt(job.Config.NoSpeedup), boolToInt(job.Config.FilterOnomatopoeia), job.Config.Concurrency,
 		job.CreatedAt.Format(time.RFC3339),
 		timePtr(job.CompletedAt),
 		job.Error,
@@ -116,7 +118,7 @@ func (r *SQLiteJobRepo) FindByID(ctx context.Context, id string) (domain.Job, er
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
-		       tts_provider, tts_volume, no_speedup, concurrency,
+		       tts_provider, tts_volume, no_speedup, filter_onomatopoeia, concurrency,
 		       output_size, created_at, completed_at, error
 		FROM jobs WHERE id = ?
 	`, id)
@@ -127,7 +129,7 @@ func (r *SQLiteJobRepo) ListRecent(ctx context.Context, userID string, limit int
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
-		       tts_provider, tts_volume, no_speedup, concurrency,
+		       tts_provider, tts_volume, no_speedup, filter_onomatopoeia, concurrency,
 		       output_size, created_at, completed_at, error
 		FROM jobs WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
 	`, userID, limit)
@@ -151,7 +153,7 @@ func (r *SQLiteJobRepo) ListByTask(ctx context.Context, taskID string) ([]domain
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
-		       tts_provider, tts_volume, no_speedup, concurrency,
+		       tts_provider, tts_volume, no_speedup, filter_onomatopoeia, concurrency,
 		       output_size, created_at, completed_at, error
 		FROM jobs WHERE task_id = ? ORDER BY created_at ASC
 	`, taskID)
@@ -201,7 +203,7 @@ func (r *SQLiteJobRepo) DeleteExpired(ctx context.Context, ttl time.Duration) ([
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, user_id, task_id, status, progress, audio_key, vtt_key, output_key,
 		       audio_name, vtt_name,
-		       tts_provider, tts_volume, no_speedup, concurrency,
+		       tts_provider, tts_volume, no_speedup, filter_onomatopoeia, concurrency,
 		       output_size, created_at, completed_at, error
 		FROM jobs WHERE created_at < ? AND status IN (?, ?)
 	`, cutoff, string(domain.StatusCompleted), string(domain.StatusFailed))
@@ -242,12 +244,13 @@ type scanner interface {
 
 func scanJob(s scanner) (domain.Job, error) {
 	var (
-		j           domain.Job
-		status      string
-		noSpeedup   int
-		createdAt   string
-		completedAt sql.NullString
-		errMsg      sql.NullString
+		j                  domain.Job
+		status             string
+		noSpeedup          int
+		filterOnomatopoeia int
+		createdAt          string
+		completedAt        sql.NullString
+		errMsg             sql.NullString
 	)
 
 	err := s.Scan(
@@ -255,7 +258,7 @@ func scanJob(s scanner) (domain.Job, error) {
 		&j.AudioKey, &j.VTTKey, &j.OutputKey,
 		&j.AudioName, &j.VTTName,
 		&j.Config.TTSProvider, &j.Config.TTSVolume,
-		&noSpeedup, &j.Config.Concurrency,
+		&noSpeedup, &filterOnomatopoeia, &j.Config.Concurrency,
 		&j.OutputSize, &createdAt, &completedAt, &errMsg,
 	)
 	if err != nil {
@@ -267,6 +270,7 @@ func scanJob(s scanner) (domain.Job, error) {
 
 	j.Status = domain.Status(status)
 	j.Config.NoSpeedup = noSpeedup != 0
+	j.Config.FilterOnomatopoeia = filterOnomatopoeia != 0
 	j.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	if completedAt.Valid {
 		t, _ := time.Parse(time.RFC3339, completedAt.String)
